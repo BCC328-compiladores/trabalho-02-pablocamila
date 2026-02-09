@@ -1,4 +1,4 @@
-\documentclass[12pt,a4paper]{article}
+\documentclass[12pt,a4paper,fleqn]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[brazil]{babel}
 \usepackage[T1]{fontenc}
@@ -9,9 +9,16 @@
 \usepackage{xcolor}
 \usepackage{amsmath}
 \usepackage{amssymb}
-
+\usepackage{nccmath}
+\usepackage[utf8]{inputenc}
 \geometry{a4paper, left=3cm, right=2cm, top=3cm, bottom=2cm}
-
+% Configuração para aceitar acentos
+\lstset{
+    basicstyle=\ttfamily,
+    inputencoding=utf8,
+    extendedchars=true,
+    literate={á}{{\'a}}1 {ã}{{\~a}}1 {é}{{\'e}}1 {ç}{{\c{c}}}1 {ó}{{\'o}}1 {õ}{{\~o}}1 {í}{{\'i}}1 {ú}{{\'u}}1 {Â}{{\^A}}1,
+}
 \definecolor{codegreen}{rgb}{0,0.6,0}
 \definecolor{codegray}{rgb}{0.5,0.5,0.5}
 \definecolor{codepurple}{rgb}{0.58,0,0.82}
@@ -40,9 +47,11 @@
 
 \title{Relatório de Projeto: Compilador SL}
 \author{
-    Nome do Aluno \\
-    Matrícula: \\
-    BCC328 - Construção de Compiladores I - DECOM/UFOP
+    Camila Aparecida \\
+    Matrícula: 22.2.4007 \\
+    Pablo Gonçalves \\
+    Matrícula: 22.2.4013 \\
+    bcc328- Construção de Compiladores I - DECOM/UFOP
 }
 \date{\today}
 
@@ -51,44 +60,1832 @@
 \maketitle
 
 \begin{abstract}
+Este documento apresenta o relatório da primeira etapa do desenvolvimento do compilador para a linguagem SL, focada na análise léxica e sintática. O projeto é desenvolvido em Haskell, utilizando as ferramentas Alex e Happy para geração dos analisadores.
 \end{abstract}
 
 \tableofcontents
 
 \section{Introdução}
+O objetivo deste trabalho é desenvolver um compilador completo para a linguagem de programação SL (Simple Language), uma linguagem com tipagem estática e suporte a funções, registros, arranjos e polimorfismo paramétrico. Este projeto é desenvolvido como parte dos requisitos da disciplina bcc328- Construção de Compiladores I, do Departamento de Computação da Universidade Federal de Ouro Preto (UFOP). O compilador será implementado na linguagem funcional Haskell e terá como alvo a geração de código WebAssembly (WAT), permitindo a portabilidade e execução de programas em ambientes web modernos.
+
+A construção de um compilador é uma tarefa complexa que envolve o entendimento profundo de teoria das linguagens formais, estruturas de dados e algoritmos. O projeto visa consolidar os conhecimentos teóricos adquiridos em sala de aula através da implementação prática das fases fundamentais de um compilador: análise léxica, análise sintática, análise semântica (verificação de tipos) e geração de código intermediário e final. É utilizado o Haskell como linguagem de implementação, juntamente com ferramentas como Alex e Happy, sendo configurações suficientes para lidar e representar suficientemente as transformações de código necessárias em cada etapa do processo de compilação.
 
 \section{Metodologia}
 
 \subsection{Estrutura sintática de SL}
+\label{sec:glc}
+A construção da gramática livre de contexto para a linguagem SL foi guiada pelos exemplos práticos fornecidos. SL é uma linguagem caracterizada por sua tipagem estática, e sua estrutura é composta por declarações de nível superior (\texttt{top}), que incluem definições de funções (\texttt{funcDecl}) e de estruturas de dados definidas pelo usuário (\texttt{structDecl}). O sistema de tipos suporta tipos primitivos (\texttt{int, float, string, bool, void}), estruturas compostas como Arranjos/Arrays e Registros/Structs, além de funções de alta ordem e polimorfismo paramétrico (Genéricos), este último indicado pela palavra-chave \texttt{forall}. As estruturas de controle de fluxo incluem condicionais (\texttt{if/else}) e laços (\texttt{while, for}). Os comandos de bloco (\texttt{let}, atribuição, \texttt{return}, chamadas de função) operam sobre expressões ($\text{expr}$) que abrangem literais, operações, acesso a arranjos e membros de estruturas, e a própria sintaxe de definição de função.
+\begin{fleqn}
+\[
+\begin{array}{lcl}
+\text{prog} & \rightarrow & \text{tops prog} \mid \textbf{\text{$\lambda$}}\\
+\text{top} & \rightarrow & \text{funcDecl} \mid \text{structDecl} \\
+\text{structDecl} & \rightarrow & \text{'struct' ID '\{' structFields '\}'} \\
+\text{structFields} & \rightarrow & \text{structField structFields} \mid \text{$\lambda$}\\
+\text{structField} & \rightarrow & \text{ID ':' type ';'} \\
+\text{funcDecl} & \rightarrow & \text{generic 'func' ID '(' params ')' returnType '\{' block '\}'} \\ & & \mid \text{'func' ID '(' params ')' returnType '\{' block '\}'} \\
+\text{generic} & \rightarrow & \text{'forall' typeVar '.'} \\
+\text{typeVar} & \rightarrow & \text{ID typeVar} \mid \text{ID} \\
+\text{params} & \rightarrow & \text{paramList} \mid \text{$\lambda$} \\
+\text{paramList} & \rightarrow & \text{param ',' paramList} \mid \text{param} \\
+\text{param} & \rightarrow & \text{ID ':' type} \mid \text{ID} \\
+\text{returnType} & \rightarrow & \text{':' type} \mid \text{$\lambda$} \\
+\text{type} & \rightarrow & \text{'int'} \mid \text{'float'} \mid \text{'string'} \mid \text{'bool'} \mid \text{'void'} \mid \text{type '[' ']'} \mid \text{ID} \\ & & \mid \text{type '[' expr ']'} \mid \text{'(' types ')' '->' type} \\
+\text{types} & \rightarrow & \text{type ',' types} \mid \text{type} \\
+\text{block} & \rightarrow & \text{cmds} \\
+\text{cmds} & \rightarrow & \text{cmd cmds} \mid \text{$\lambda$} \\
+\text{cmd} & \rightarrow & \text{'let' ID ':' type '=' expr ';'} \mid \text{'let' ID ':' type ';'} \\ & & \mid \text{'let' ID '=' expr ';'} \mid 
+\text{expr '=' expr ';'} \\ & & \mid \text{'return' expr ';'} \mid \text{'return' ';'} \\ & & \mid \text{'if' '(' expr ')' '\{' block '\}' 'else' '\{' block '\}'} \\ & & \mid \text{'if' '(' expr ')' '\{' block '\}} \\ & & \mid \text{'while' '(' expr ')' '\{' block '\}} \\ & & \mid \text{'for' '(' forInit ';' expr ';' forStep ')' '\{' block '\}'} \\ & & \mid \text{'print' '(' expr ')' ';'} \mid \text{expr ';'} \\
+\text{forInit} & \rightarrow & \text{'let' ID ':' type '=' expr} \mid \text{'let' ID ':' type} \mid \text{'let' ID '=' expr} \\ & & \mid \text{expr '=' expr} \mid \text{expr} \mid \text{$\lambda$} \\
+\text{forStep} & \rightarrow & \text{ID '=' expr} \mid \text{ID '++'} \mid \text{$\lambda$} \\
+\text{expr} & \rightarrow & \text{int} \mid \text{float} \mid \text{string} \mid \text{'true'} \mid \text{'false'} \mid \text{ID} \mid \text{expr '+' expr} \\ & & \mid \text{expr '-' expr} \mid \text{expr '*' expr} \mid \text{expr '/' expr} \mid \text{expr '\&\&' expr} \\ & & \mid \text{expr '||' expr} \mid \text{expr '>' expr} \mid \text{expr '<' expr} \mid \text{expr '>=' expr} \\ & & \mid \text{expr '<=' expr} \mid \text{expr '==' expr} \mid \text{expr '!=' expr} \mid \text{'!' expr} \\ & & \mid \text{'-' expr} \mid \text{expr '(' exprs ')'} \mid \text{expr '(' ')'} \mid \text{expr '[' expr ']'} \\ & & \mid \text{expr '.' ID} \mid \text{'new' type} \\ & & \mid \text{ID '\{' exprs '\}'} \mid \text{'[' exprs ']'} \mid \text{'(' expr ')'} \\
+\text{exprs} & \rightarrow & \text{expr ',' exprs} \mid \text{expr}
+\end{array}
+\]
+\end{fleqn}
+
 
 \subsection{Sistema de tipos para SL}
+O sistema de tipos da linguagem SL é estático, exigindo que variáveis e funções tenham seus tipos definidos explicitamente (com exceção dos casos onde há inferência de tipo utilizando a palavra reservada \texttt{new}). A linguagem suporta um conjunto de tipos primitivos e compostos, conforme descrito a seguir:
 
+\begin{itemize}
+    \item \textbf{Tipos Primitivos}:
+    \begin{itemize}
+        \item \texttt{int}: Números inteiros.
+        \item \texttt{float}: Números de ponto flutuante.
+        \item \texttt{string}: Sequências de caracteres.
+        \item \texttt{bool}: Valores booleanos (\texttt{true} e \texttt{false}).
+        \item \texttt{void}: Indica ausência de valor, usado principalmente como retorno de funções.
+    \end{itemize}
+
+    \item \textbf{Tipos Estruturados}:
+    \begin{itemize}
+        \item \textbf{Arranjos (Arrays)}: Coleções ordenadas de elementos do mesmo tipo. Podem ser declarados com tamanho fixo (ex: \texttt{int[5]} ou \texttt{int var[v.size]}) ou sem tamanho definido (ex: \texttt{int[]}) quando usados como parâmetros ou referências.
+        \item \textbf{Registros (Structs)}: Tipos de dados compostos definidos pelo usuário, permitindo agrupar campos de diferentes tipos sob um único nome.
+    \end{itemize}
+
+    \item \textbf{Tipos de Função}:
+    Suporte a funções de alta ordem, permitindo que funções sejam passadas como argumentos. A sintaxe de tipo de função é denotada por \texttt{(T1, T2, ...) -> Tr}, onde \texttt{Ti} são os tipos dos parâmetros e \texttt{Tr} é o tipo de retorno.
+
+    \item \textbf{Polimorfismo Paramétrico}:
+    A linguagem suporta genéricos através da palavra-chave \texttt{forall}.
+    
+\end{itemize}
 \subsection{Inferência de tipos para SL}
+A inferência de tipos na linguagem SL é implementada de forma limitada, focada na palavra-chave \texttt{auto} (representada no código como \texttt{TyVar "auto"}). Durante a análise semântica, quando uma declaração de variável utiliza \texttt{auto}, o compilador infere o tipo da variável a partir da expressão de inicialização.
+
+A lógica é implementada na função \texttt{checkStmt}:
+\begin{lstlisting}[language=Haskell]
+checkStmt (SLet name typ exprMaybe) = do
+    -- ...
+    case exprMaybe of
+        Just expr -> do
+            exprType <- checkExpr expr
+            if isAuto typ
+                then addVar name exprType -- Tipo inferido da expressao
+                else do
+                    -- Verificacao normal de compatibilidade
+                    unless (areTypesCompatible typ exprType) $
+                        throwError "..."
+                    addVar name typ
+\end{lstlisting}
+Desta forma, declarações como \texttt{let x = 10;} são tratadas internamente como \texttt{let x : int = 10;}.
 
 \subsection{Semântica operacional para SL}
+A semântica operacional é implementada através de um interpretador que simula a execução do programa sobre uma máquina abstrata. O estado desta máquina é gerenciado pela mônada \texttt{StateT RuntimeEnv IO}, onde \texttt{IO} permite operações de entrada/saída e mutação de memória real.
+
+\subsubsection{Modelo de Memória}
+A memória é modelada utilizando \texttt{IORef} (referências mutáveis em Haskell), permitindo simular o comportamento imperativo de variáveis, arrays e structs.
+\begin{itemize}
+    \item \textbf{Ambiente de Execução}: Contém um mapa de variáveis locais (\texttt{envVars}) que associa identificadores a referências de memória (\texttt{IORef Value}).
+    \item \textbf{Valores}: O tipo \texttt{Value} representa os dados em tempo de execução, incluindo referências para arrays (\texttt{IORef (IOArray Int Value)}) e structs (\texttt{IORef (Map String Value)}).
+\end{itemize}
+
+\subsubsection{Execução de Comandos}
+A função \texttt{realExecStmt} implementa a semântica de passo pequeno (small-step) para os comandos:
+\begin{itemize}
+    \item \textbf{Atribuição}: Avalia a expressão à direita e atualiza o conteúdo da referência de memória associada à variável à esquerda via \texttt{writeIORef}.
+    \item \textbf{Controle de Fluxo}: Comandos \texttt{if}, \texttt{while} e \texttt{for} avaliam condições booleanas e executam blocos de código condicionalmente ou repetidamente (via recursão no interpretador).
+    \item \textbf{Funções}: A chamada de função (\texttt{evalFuncCall}) implementa escopo estático e passagem por valor. Um novo ambiente local é criado para cada chamada, copiando os valores dos argumentos para novas células de memória.
+\end{itemize}
 
 
 \section{Arquitetura do Compilador}
 
 \subsection{Análise léxica}
+A análise léxica foi implementada utilizando o gerador de analisadores léxicos Alex. O arquivo de especificação \texttt{SLLexer.x} define as regras para o reconhecimento dos tokens da linguagem SL.
+
+Para facilitar a definição dos padrões léxicos, foram utilizadas macros de expressões regulares que simplificam a especificação de conjuntos de caracteres e padrões recorrentes. As definições primitivas e compostas utilizadas no analisador são apresentadas a seguir:
+
+\begin{verbatim}
+-- primitivas
+$digit = 0-9
+$alpha = [a-zA-Z]
+
+-- compostas
+@identifier = $alpha[$alpha $digit]*
+@number     = $digit+
+@float      = $digit+ \. $digit+
+@string     = \" .* \"
+\end{verbatim}
+
+O analisador utiliza a mônada \texttt{Alex} para manter o estado da análise, permitindo o rastreamento da posição (linha e coluna) de cada token. As principais categorias de tokens definidas incluem:
+\begin{itemize}
+    \item \textbf{Palavras-chave}: \texttt{func}, \texttt{struct}, \texttt{if}, \texttt{else}, \texttt{while}, \texttt{for}, \texttt{return}, \texttt{let}, \texttt{new}, \texttt{print}, \texttt{forall}, \texttt{void}.
+    \item \textbf{Tipos Primitivos}: \texttt{int}, \texttt{float}, \texttt{string}, \texttt{bool}.
+    \item \textbf{Operadores}: Aritméticos (\texttt{+}, \texttt{-}, \texttt{*}, \texttt{/}, \texttt{++}), Lógicos (\texttt{\&\&}, \texttt{||}, \texttt{!}) e Relacionais (\texttt{>}, \texttt{<}, \texttt{>=}, \texttt{<=}, \texttt{==}, \texttt{!=}).
+    \item \textbf{Delimitadores e Pontuação}: \texttt{\{}, \texttt{\}}, \texttt{(}, \texttt{)}, \texttt{[}, \texttt{]}, \texttt{;}, \texttt{:}, \texttt{,}, \texttt{.}, \texttt{=}, \texttt{->}.
+    \item \textbf{Literais}: Números inteiros, números de ponto flutuante, strings e booleanos (\texttt{true}, \texttt{false}).
+    \item \textbf{Identificadores}: Sequências alfanuméricas iniciadas por letras.
+\end{itemize}
+
+O lexer ignora espaços em branco e comentários de linha iniciados por \texttt{//}. A estrutura de dados \texttt{Token} armazena a posição e o lexema correspondente, definido no tipo \texttt{Lexeme}.
 
 \subsection{Análise sintática}
+A análise sintática foi desenvolvida com o auxílio da ferramenta Happy, que gera um analisador sintático LALR. A especificação encontra-se no arquivo \texttt{SLParser.y}.
+
+O parser consome a lista de tokens produzida pelo lexer e constrói a Árvore de Sintaxe Abstrata (AST). Para resolver ambiguidades e reduzir erros de \textit{shift/reduce} na gramática, foram definidas regras de precedência e associatividade explícitas para os operadores. Além das regras matemáticas padrão, destacam-se:
+
+\begin{itemize}
+    \item A precedência mais alta é atribuída aos operadores de acesso a membros (\texttt{.}), indexação de array (\texttt{[}) e chamada de função (\texttt{(}), garantindo que expressões como \texttt{v[i].size} sejam parseadas como \texttt{(v[i]).size}.
+    \item Operadores unários (\texttt{!}, \texttt{-}) possuem precedência imediatamente inferior aos acessores.
+    \item Operadores aritméticos seguem a hierarquia usual (\texttt{*} e \texttt{/} sobre \texttt{+} e \texttt{-}), todos associativos à esquerda.
+    \item Operadores relacionais (\texttt{==}, \texttt{!=}, \texttt{>}, etc.) são não-associativos (\texttt{\%nonassoc}), impedindo expressões ambíguas como \texttt{a < b < c} sem parênteses explícitos.
+    \item Operadores lógicos possuem precedência menor que os relacionais, com \texttt{\&\&} (E lógico) tendo precedência sobre \texttt{||} (OU lógico), ambos associativos à esquerda.
+    \item O operador de tipo de função (\texttt{->}) é associativo à direita (\texttt{\%right}), permitindo que tipos como \texttt{int -> int -> int} sejam interpretados como \texttt{int -> (int -> int)}, facilitando o suporte a funções de alta ordem e currying.
+\end{itemize}
+
+A estrutura da gramática inicia-se com o não-terminal \texttt{Program}, que define um programa como uma sequência recursiva de declarações de nível superior (\texttt{TopLevels}). Estas declarações podem ser definições de estruturas (\texttt{StructDecl}) ou funções (\texttt{FuncDecl}). No caso das funções, a gramática suporta a definição de parâmetros genéricos (iniciados por \texttt{forall}), lista de parâmetros formais, tipo de retorno opcional e um bloco de código. O bloco (\texttt{Block}), por sua vez, é composto por uma lista de comandos (\texttt{Stmts}), que incluem estruturas de controle de fluxo (\texttt{if}, \texttt{while}, \texttt{for}), declarações de variáveis locais (\texttt{let}), comandos de retorno e expressões.
 
 \subsection{Árvore de sintaxe abstrata}
+A Árvore de Sintaxe Abstrata (AST) é definida no módulo \texttt{SLSyntax.hs} e representa a estrutura hierárquica do código fonte. As principais estruturas de dados são:
+
+\begin{itemize}
+    \item \textbf{Program}: Raiz da árvore, contendo uma lista de \texttt{TopLevel}.
+    \item \textbf{TopLevel}: Representa declarações globais, divididas em \texttt{TopFunc} (declaração de função) e \texttt{TopStruct} (declaração de registro).
+    \item \textbf{FuncDecl}: Armazena o nome da função, parâmetros genéricos, parâmetros formais, tipo de retorno e o corpo da função (bloco).
+    \item \textbf{StructDecl}: Define o nome da estrutura e seus campos com respectivos tipos.
+    \item \textbf{Stmt}: Representa os comandos da linguagem, como declaração de variáveis (\texttt{SLet}), atribuição (\texttt{SAssign}), retorno (\texttt{SReturn}), condicionais (\texttt{SIf}), laços (\texttt{SWhile}, \texttt{SFor}), impressão (\texttt{SPrint}) e expressões isoladas (\texttt{SExp}). 
+    \begin{itemize}
+        \item \textit{Obs: Estes Stataments (STMT) apresentados na árvore, são os Commands (Cmd(s)) presentes na Gramática Livre de Contexto (GLC), localizadas no tópico \ref{sec:glc}. } 
+    \end{itemize}
+    
+    \item \textbf{Expr}: Representa expressões que resultam em valores, incluindo literais (\texttt{EInt}, \texttt{EFloat}, etc.), variáveis (\texttt{EVar}), operações binárias e unárias (\texttt{EBinOp}, \texttt{EUnOp}), chamadas de função (\texttt{ECall}), acesso a arrays e campos de structs, e instanciação de objetos.
+    \item \textbf{Type}: Define os tipos suportados pela linguagem, incluindo tipos primitivos, arrays, structs e tipos de função.
+\end{itemize}
+\subsection{Árvore de sintaxe abstrata}
+A Árvore de Sintaxe Abstrata (AST) é definida no módulo \texttt{SLSyntax.hs} e representa a estrutura hierárquica do código fonte. As principais estruturas de dados são:
+
+\begin{itemize}
+    \item \textbf{Program}: Raiz da árvore, contendo uma lista de \texttt{TopLevel}.
+    \item \textbf{TopLevel}: Representa declarações globais, divididas em \texttt{TopFunc} (declaração de função) e \texttt{TopStruct} (declaração de registro).
+    \item \textbf{FuncDecl}: Armazena o nome da função, parâmetros genéricos, parâmetros formais, tipo de retorno e o corpo da função (bloco).
+    \item \textbf{StructDecl}: Define o nome da estrutura e seus campos com respectivos tipos.
+    \item \textbf{Stmt}: Representa os comandos da linguagem, como declaração de variáveis (\texttt{SLet}), atribuição (\texttt{SAssign}), retorno (\texttt{SReturn}), condicionais (\texttt{SIf}), laços (\texttt{SWhile}, \texttt{SFor}), impressão (\texttt{SPrint}) e expressões isoladas (\texttt{SExp}). 
+    \begin{itemize}
+        \item \textit{Obs: Estes Stataments (STMT) apresentados na árvore, são os Commands (Cmd(s)) presentes na Gramática Livre de Contexto (GLC), localizadas no tópico \ref{sec:glc}. } 
+    \end{itemize}
+    
+    \item \textbf{Expr}: Representa expressões que resultam em valores, incluindo literais (\texttt{EInt}, \texttt{EFloat}, etc.), variáveis (\texttt{EVar}), operações binárias e unárias (\texttt{EBinOp}, \texttt{EUnOp}), chamadas de função (\texttt{ECall}), acesso a arrays e campos de structs, e instanciação de objetos.
+    \item \textbf{Type}: Define os tipos suportados pela linguagem, incluindo tipos primitivos, arrays, structs e tipos de função.
+\end{itemize}
 
 \subsection{Análise semântica}
+A análise semântica é realizada pelo módulo \texttt{SL.TypeChecker.TypeChecker}. Seu objetivo é garantir a consistência do programa antes da execução, verificando regras de tipos e escopo.
+
+\subsubsection{Estratégia de Verificação}
+Para suportar referências futuras (forward references), onde uma função ou struct pode ser usada antes de sua definição no código fonte, o verificador utiliza uma estratégia de 4 passadas:
+\begin{enumerate}
+    \item \textbf{Coleta de Structs}: Registra os nomes de todas as estruturas definidas no ambiente global.
+    \item \textbf{Coleta de Funções}: Registra as assinaturas (nome, parâmetros e retorno) de todas as funções.
+    \item \textbf{Verificação de Campos}: Valida se os tipos utilizados nos campos das structs existem.
+    \item \textbf{Verificação de Corpos}: Analisa o corpo de cada função, validando comandos e expressões.
+\end{enumerate}
+
+\subsubsection{Ambiente e Regras}
+O ambiente de verificação (\texttt{Env}) armazena tabelas de símbolos para structs, funções e variáveis. A verificação impõe tipagem forte, mas permite coerção implícita (widening) de \texttt{int} para \texttt{float} em operações matemáticas. Erros semânticos, como uso de variáveis não declaradas ou incompatibilidade de tipos, interrompem o processo e reportam mensagens de erro descritivas.
 
 \subsection{Geração de código}
 
 \section{Resultados e Discussão}
 
 \subsection{Instruções de Uso}
+O projeto é configurado para ser executado em um ambiente Docker, com todas as dependências necessárias (GHC, Cabal, Alex, Happy).
 
+\subsubsection{Execução via Docker}
+Para iniciar o ambiente de desenvolvimento, utilize os comandos:
+\begin{lstlisting}[language=bash]
+docker compose up -d
+docker compose exec sl bash
+\end{lstlisting}
+
+Dentro do container, navegue para o diretório de trabalho e execute o script de testes:
+\begin{lstlisting}[language=bash]
+cd workspace
+# Corrigir quebras de linha retirando caracter invisivel (caso editado em Windows)
+sed -i 's/\r$//' run_tests.sh 
+
+# Executar todas as etapas (Lexer, Parser, Check, Run) em todos os arquivos de teste
+./run_tests.sh all
+
+# Executar apenas a Etapa 1 (Lexer, Parser, Pretty)
+./run_tests.sh stage1
+
+# Executar apenas a Verificacao de Tipos (Etapa 2)
+./run_tests.sh check
+
+# Executar apenas o Interpretador (Etapa 2)
+./run_tests.sh run
+\end{lstlisting}
+
+\subsubsection{Execução Manual}
+O compilador pode ser invocado diretamente via Cabal com diferentes flags para testar etapas específicas:
+
+\begin{itemize}
+    \item \textbf{Lexer}: Imprime a lista de tokens.
+    \begin{lstlisting}[language=bash]
+cabal run -v0 bcc328  --lexer tests/example1.sl
+    \end{lstlisting}
+    
+    \item \textbf{Parser}: Imprime a Árvore de Sintaxe Abstrata (AST).
+    \begin{lstlisting}[language=bash]
+cabal run -v0 bcc328  --parser tests/example1.sl
+    \end{lstlisting}
+    
+    \item \textbf{Pretty Printer}: Imprime o código reformatado a partir da AST.
+    \begin{lstlisting}[language=bash]
+cabal run -v0 bcc328  --pretty tests/example1.sl
+    \end{lstlisting}
+    \item \textbf{Type Checker}: Verificar Tipos de um arquivo especifico
+    \begin{lstlisting}[language=bash]
+cabal run -v0 bcc328  --check tests/example1.sl
+    \end{lstlisting}
+    \item \textbf{Interpretador}: Executar o Interpretador em um arquivo especifico
+    \begin{lstlisting}[language=bash]
+cabal run -v0 bcc328  --run tests/example1.sl
+    \end{lstlisting}
+
+
+
+    \end{lstlisting}
+\end{itemize}
 
 \subsection{Testes Realizados}
+Foram utilizados os exemplos fornecidos na especificação da linguagem para validar o funcionamento dos analisadores léxico e sintático. Abaixo estão os códigos fonte utilizados nos testes.
+
+\subsubsection{Exemplo 1: Fatorial}
+\begin{lstlisting}
+func factorial(n : int) : int {
+    if (n <= 1) {
+        return 1;
+    } else {
+        return n * factorial(n - 1);
+    }
+}
+
+func main() : int {
+    let result : int = factorial(5);
+    print(result); // Deve imprimir 120
+    return 0;
+}
+\end{lstlisting}
+\paragraph{Saída do Lexer} \mbox{}
+\begin{lstlisting}
+--- Lexer ---
+Token {pos = (1,1), lexeme = TFunc}
+Token {pos = (1,6), lexeme = TIdent "factorial"}
+Token {pos = (1,15), lexeme = TLParen}
+Token {pos = (1,16), lexeme = TIdent "n"}
+Token {pos = (1,18), lexeme = TColon}
+Token {pos = (1,20), lexeme = TInt}
+Token {pos = (1,23), lexeme = TRParen}
+Token {pos = (1,25), lexeme = TColon}
+Token {pos = (1,27), lexeme = TInt}
+Token {pos = (1,31), lexeme = TLBrace}
+Token {pos = (2,5), lexeme = TIf}
+Token {pos = (2,8), lexeme = TLParen}
+Token {pos = (2,9), lexeme = TIdent "n"}
+Token {pos = (2,11), lexeme = TLe}
+Token {pos = (2,14), lexeme = TLitInt 1}
+Token {pos = (2,15), lexeme = TRParen}
+Token {pos = (2,17), lexeme = TLBrace}
+Token {pos = (3,9), lexeme = TReturn}
+Token {pos = (3,16), lexeme = TLitInt 1}
+Token {pos = (3,17), lexeme = TSemi}
+Token {pos = (4,5), lexeme = TRBrace}
+Token {pos = (4,7), lexeme = TElse}
+Token {pos = (4,12), lexeme = TLBrace}
+Token {pos = (5,9), lexeme = TReturn}
+Token {pos = (5,16), lexeme = TIdent "n"}
+Token {pos = (5,18), lexeme = TTimes}
+Token {pos = (5,20), lexeme = TIdent "factorial"}
+Token {pos = (5,29), lexeme = TLParen}
+Token {pos = (5,30), lexeme = TIdent "n"}
+Token {pos = (5,32), lexeme = TMinus}
+Token {pos = (5,34), lexeme = TLitInt 1}
+Token {pos = (5,35), lexeme = TRParen}
+Token {pos = (5,36), lexeme = TSemi}
+Token {pos = (6,5), lexeme = TRBrace}
+Token {pos = (7,1), lexeme = TRBrace}
+Token {pos = (9,1), lexeme = TFunc}
+Token {pos = (9,6), lexeme = TIdent "main"}
+Token {pos = (9,10), lexeme = TLParen}
+Token {pos = (9,11), lexeme = TRParen}
+Token {pos = (9,13), lexeme = TColon}
+Token {pos = (9,15), lexeme = TInt}
+Token {pos = (9,19), lexeme = TLBrace}
+Token {pos = (10,5), lexeme = TLet}
+Token {pos = (10,9), lexeme = TIdent "result"}
+Token {pos = (10,16), lexeme = TColon}
+Token {pos = (10,18), lexeme = TInt}
+Token {pos = (10,22), lexeme = TAssign}
+Token {pos = (10,24), lexeme = TIdent "factorial"}
+Token {pos = (10,33), lexeme = TLParen}
+Token {pos = (10,34), lexeme = TLitInt 5}
+Token {pos = (10,35), lexeme = TRParen}
+Token {pos = (10,36), lexeme = TSemi}
+Token {pos = (11,5), lexeme = TPrint}
+Token {pos = (11,10), lexeme = TLParen}
+Token {pos = (11,11), lexeme = TIdent "result"}
+Token {pos = (11,17), lexeme = TRParen}
+Token {pos = (11,18), lexeme = TSemi}
+Token {pos = (12,5), lexeme = TReturn}
+Token {pos = (12,12), lexeme = TLitInt 0}
+Token {pos = (12,13), lexeme = TSemi}
+Token {pos = (13,1), lexeme = TRBrace}
+Token {pos = (14,1), lexeme = TEOF}    
+\end{lstlisting}
+
+\paragraph{Saída Parser}\mbox{}
+\begin{lstlisting}
+--- Parser ---
+Program
+|
++- Func: factorial
+|  |
+|  +- Generics: []
+|  |
+|  +- Params
+|  |  |
+|  |  `- Param: n
+|  |     |
+|  |     `- TyInt
+|  |
+|  +- ReturnType
+|  |  |
+|  |  `- TyInt
+|  |
+|  `- Body
+|     |
+|     `- If
+|        |
+|        +- BinOp: Le
+|        |  |
+|        |  +- Var: n
+|        |  |
+|        |  `- Int: 1
+|        |
+|        +- Then
+|        |  |
+|        |  `- Return
+|        |     |
+|        |     `- Int: 1
+|        |
+|        `- Else
+|           |
+|           `- Return
+|              |
+|              `- BinOp: Mul
+|                 |
+|                 +- Var: n
+|                 |
+|                 `- Call
+|                    |
+|                    +- Var: factorial
+|                    |
+|                    `- BinOp: Sub
+|                       |
+|                       +- Var: n
+|                       |
+|                       `- Int: 1
+|
+`- Func: main
+   |
+   +- Generics: []
+   |
+   +- Params
+   |
+   +- ReturnType
+   |  |
+   |  `- TyInt
+   |
+   `- Body
+      |
+      +- Let: result
+      |  |
+      |  +- TyInt
+      |  |
+      |  `- Call
+      |     |
+      |     +- Var: factorial
+      |     |
+      |     `- Int: 5
+      |
+      +- Print
+      |  |
+      |  `- Var: result
+      |
+      `- Return
+         |
+         `- Int: 0
+
+\end{lstlisting}
+
+\paragraph{Saída Pretty}\mbox{}
+\begin{lstlisting}
+func factorial(n : int) : int {
+    if (n <= 1) {
+        return 1;
+    } else {
+          return n * factorial(n - 1);
+      }
+}
+func main() : int {
+    let result : int  = factorial(5);
+    print(result);
+    return 0;
+}
+\end{lstlisting}
+
+
+\subsubsection{Exemplo 2: Registros}
+\begin{lstlisting}
+struct Person {
+    name : string;
+    age : int;
+    height : float;
+}
+
+func main() : void {
+    // Arranjo de registros
+    let people : People[3];
+    people[0] = Person{"Alice", 25, 1.65};
+    people[1] = Person{"Bob", 30, 1.80};
+    people[2] = Person{"Charlie", 35, 1.75};
+    // Iteracao sobre arranjo
+    let i : int = 0;
+    while (i < 3) {
+        print(people[i].name);
+        print(people[i].age);
+        print(people[i].height);
+        i = i + 1;
+    }
+}
+\end{lstlisting}
+\paragraph{Saída Lexer}\mbox{}
+\begin{lstlisting}
+--- Lexer ---
+Token {pos = (1,1), lexeme = TStruct}
+Token {pos = (1,8), lexeme = TIdent "Person"}
+Token {pos = (1,15), lexeme = TLBrace}
+Token {pos = (2,5), lexeme = TIdent "name"}
+Token {pos = (2,10), lexeme = TColon}
+Token {pos = (2,12), lexeme = TString}
+Token {pos = (2,18), lexeme = TSemi}
+Token {pos = (3,5), lexeme = TIdent "age"}
+Token {pos = (3,9), lexeme = TColon}
+Token {pos = (3,11), lexeme = TInt}
+Token {pos = (3,14), lexeme = TSemi}
+Token {pos = (4,5), lexeme = TIdent "height"}
+Token {pos = (4,12), lexeme = TColon}
+Token {pos = (4,14), lexeme = TFloat}
+Token {pos = (4,19), lexeme = TSemi}
+Token {pos = (5,1), lexeme = TRBrace}
+Token {pos = (7,1), lexeme = TFunc}
+Token {pos = (7,6), lexeme = TIdent "main"}
+Token {pos = (7,10), lexeme = TLParen}
+Token {pos = (7,11), lexeme = TRParen}
+Token {pos = (7,13), lexeme = TColon}
+Token {pos = (7,15), lexeme = TVoid}
+Token {pos = (7,20), lexeme = TLBrace}
+Token {pos = (9,5), lexeme = TLet}
+Token {pos = (9,9), lexeme = TIdent "people"}
+Token {pos = (9,16), lexeme = TColon}
+Token {pos = (9,18), lexeme = TIdent "People"}
+Token {pos = (9,24), lexeme = TLBracket}
+Token {pos = (9,25), lexeme = TLitInt 3}
+Token {pos = (9,26), lexeme = TRBracket}
+Token {pos = (9,27), lexeme = TSemi}
+Token {pos = (10,5), lexeme = TIdent "people"}
+Token {pos = (10,11), lexeme = TLBracket}
+Token {pos = (10,12), lexeme = TLitInt 0}
+Token {pos = (10,13), lexeme = TRBracket}
+Token {pos = (10,15), lexeme = TAssign}
+Token {pos = (10,17), lexeme = TIdent "Person"}
+Token {pos = (10,23), lexeme = TLBrace}
+Token {pos = (10,24), lexeme = TLitString "Alice"}
+Token {pos = (10,31), lexeme = TComma}
+Token {pos = (10,33), lexeme = TLitInt 25}
+Token {pos = (10,35), lexeme = TComma}
+Token {pos = (10,37), lexeme = TLitFloat 1.65}
+Token {pos = (10,41), lexeme = TRBrace}
+Token {pos = (10,42), lexeme = TSemi}
+Token {pos = (11,5), lexeme = TIdent "people"}
+Token {pos = (11,11), lexeme = TLBracket}
+Token {pos = (11,12), lexeme = TLitInt 1}
+Token {pos = (11,13), lexeme = TRBracket}
+Token {pos = (11,15), lexeme = TAssign}
+Token {pos = (11,17), lexeme = TIdent "Person"}
+Token {pos = (11,23), lexeme = TLBrace}
+Token {pos = (11,24), lexeme = TLitString "Bob"}
+Token {pos = (11,29), lexeme = TComma}
+Token {pos = (11,31), lexeme = TLitInt 30}
+Token {pos = (11,33), lexeme = TComma}
+Token {pos = (11,35), lexeme = TLitFloat 1.8}
+Token {pos = (11,39), lexeme = TRBrace}
+Token {pos = (11,40), lexeme = TSemi}
+Token {pos = (12,5), lexeme = TIdent "people"}
+Token {pos = (12,11), lexeme = TLBracket}
+Token {pos = (12,12), lexeme = TLitInt 2}
+Token {pos = (12,13), lexeme = TRBracket}
+Token {pos = (12,15), lexeme = TAssign}
+Token {pos = (12,17), lexeme = TIdent "Person"}
+Token {pos = (12,23), lexeme = TLBrace}
+Token {pos = (12,24), lexeme = TLitString "Charlie"}
+Token {pos = (12,33), lexeme = TComma}
+Token {pos = (12,35), lexeme = TLitInt 35}
+Token {pos = (12,37), lexeme = TComma}
+Token {pos = (12,39), lexeme = TLitFloat 1.75}
+Token {pos = (12,43), lexeme = TRBrace}
+Token {pos = (12,44), lexeme = TSemi}
+Token {pos = (14,5), lexeme = TLet}
+Token {pos = (14,9), lexeme = TIdent "i"}
+Token {pos = (14,11), lexeme = TColon}
+Token {pos = (14,13), lexeme = TInt}
+Token {pos = (14,17), lexeme = TAssign}
+Token {pos = (14,19), lexeme = TLitInt 0}
+Token {pos = (14,20), lexeme = TSemi}
+Token {pos = (15,5), lexeme = TWhile}
+Token {pos = (15,11), lexeme = TLParen}
+Token {pos = (15,12), lexeme = TIdent "i"}
+Token {pos = (15,14), lexeme = TLt}
+Token {pos = (15,16), lexeme = TLitInt 3}
+Token {pos = (15,17), lexeme = TRParen}
+Token {pos = (15,19), lexeme = TLBrace}
+Token {pos = (16,9), lexeme = TPrint}
+Token {pos = (16,14), lexeme = TLParen}
+Token {pos = (16,15), lexeme = TIdent "people"}
+Token {pos = (16,21), lexeme = TLBracket}
+Token {pos = (16,22), lexeme = TIdent "i"}
+Token {pos = (16,23), lexeme = TRBracket}
+Token {pos = (16,24), lexeme = TDot}
+Token {pos = (16,25), lexeme = TIdent "name"}
+Token {pos = (16,29), lexeme = TRParen}
+Token {pos = (16,30), lexeme = TSemi}
+Token {pos = (17,9), lexeme = TPrint}
+Token {pos = (17,14), lexeme = TLParen}
+Token {pos = (17,15), lexeme = TIdent "people"}
+Token {pos = (17,21), lexeme = TLBracket}
+Token {pos = (17,22), lexeme = TIdent "i"}
+Token {pos = (17,23), lexeme = TRBracket}
+Token {pos = (17,24), lexeme = TDot}
+Token {pos = (17,25), lexeme = TIdent "age"}
+Token {pos = (17,28), lexeme = TRParen}
+Token {pos = (17,29), lexeme = TSemi}
+Token {pos = (18,9), lexeme = TPrint}
+Token {pos = (18,14), lexeme = TLParen}
+Token {pos = (18,15), lexeme = TIdent "people"}
+Token {pos = (18,21), lexeme = TLBracket}
+Token {pos = (18,22), lexeme = TIdent "i"}
+Token {pos = (18,23), lexeme = TRBracket}
+Token {pos = (18,24), lexeme = TDot}
+Token {pos = (18,25), lexeme = TIdent "height"}
+Token {pos = (18,31), lexeme = TRParen}
+Token {pos = (18,32), lexeme = TSemi}
+Token {pos = (19,9), lexeme = TIdent "i"}
+Token {pos = (19,11), lexeme = TAssign}
+Token {pos = (19,13), lexeme = TIdent "i"}
+Token {pos = (19,15), lexeme = TPlus}
+Token {pos = (19,17), lexeme = TLitInt 1}
+Token {pos = (19,18), lexeme = TSemi}
+Token {pos = (20,5), lexeme = TRBrace}
+Token {pos = (21,1), lexeme = TRBrace}
+Token {pos = (22,1), lexeme = TEOF}
+\end{lstlisting}
+
+\paragraph{Saída Parser}\mbox{}
+\begin{lstlisting}
+--- Parser ---
+Program
+|
++- Struct: Person
+|  |
+|  +- Field: name
+|  |  |
+|  |  `- TyString
+|  |
+|  +- Field: age
+|  |  |
+|  |  `- TyInt
+|  |
+|  `- Field: height
+|     |
+|     `- TyFloat
+|
+`- Func: main
+   |
+   +- Generics: []
+   |
+   +- Params
+   |
+   +- ReturnType
+   |  |
+   |  `- TyVoid
+   |
+   `- Body
+      |
+      +- Let: people
+      |  |
+      |  `- Array
+      |     |
+      |     +- TyStruct "People"
+      |     |
+      |     `- Size
+      |        |
+      |        `- Int: 3
+      |
+      +- Assign
+      |  |
+      |  +- ArrayAccess
+      |  |  |
+      |  |  +- Var: people
+      |  |  |
+      |  |  `- Int: 0
+      |  |
+      |  `- StructInit: Person
+      |     |
+      |     +- String: "Alice"
+      |     |
+      |     +- Int: 25
+      |     |
+      |     `- Float: 1.65
+      |
+      +- Assign
+      |  |
+      |  +- ArrayAccess
+      |  |  |
+      |  |  +- Var: people
+      |  |  |
+      |  |  `- Int: 1
+      |  |
+      |  `- StructInit: Person
+      |     |
+      |     +- String: "Bob"
+      |     |
+      |     +- Int: 30
+      |     |
+      |     `- Float: 1.8
+      |
+      +- Assign
+      |  |
+      |  +- ArrayAccess
+      |  |  |
+      |  |  +- Var: people
+      |  |  |
+      |  |  `- Int: 2
+      |  |
+      |  `- StructInit: Person
+      |     |
+      |     +- String: "Charlie"
+      |     |
+      |     +- Int: 35
+      |     |
+      |     `- Float: 1.75
+      |
+      +- Let: i
+      |  |
+      |  +- TyInt
+      |  |
+      |  `- Int: 0
+      |
+      `- While
+         |
+         +- BinOp: Lt
+         |  |
+         |  +- Var: i
+         |  |
+         |  `- Int: 3
+         |
+         `- Body
+            |
+            +- Print
+            |  |
+            |  `- FieldAccess: name
+            |     |
+            |     `- ArrayAccess
+            |        |
+            |        +- Var: people
+            |        |
+            |        `- Var: i
+            |
+            +- Print
+            |  |
+            |  `- FieldAccess: age
+            |     |
+            |     `- ArrayAccess
+            |        |
+            |        +- Var: people
+            |        |
+            |        `- Var: i
+            |
+            +- Print
+            |  |
+            |  `- FieldAccess: height
+            |     |
+            |     `- ArrayAccess
+            |        |
+            |        +- Var: people
+            |        |
+            |        `- Var: i
+            |
+            `- Assign
+               |
+               +- Var: i
+               |
+               `- BinOp: Add
+                  |
+                  +- Var: i
+                  |
+                  `- Int: 1
+\end{lstlisting}
+
+\paragraph{Saída Pretty}\mbox{}
+\begin{lstlisting}
+--- Pretty ---
+struct Person {
+    name : string;
+    age : int;
+    height : float;
+}
+func main() {
+    let people : People[3] ;
+    people[0] = Person{"Alice",  25,  1.65};
+    people[1] = Person{"Bob",  30,  1.8};
+    people[2] = Person{"Charlie",  35,  1.75};
+    let i : int  = 0;
+    while (i < 3) {
+        print(people[i].name);
+        print(people[i].age);
+        print(people[i].height);
+        i = i + 1;
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Exemplo 3: Arranjos}
+\begin{lstlisting}
+func reverse(arr : int[], size : int) : int [] {
+    let result : int[] = new int[size];
+    let i : int = 0;
+    while (i < size) {
+        result[i] = arr[size - i - 1];
+        i = i + 1;
+    }
+    return result;
+}
+
+func main() : void {
+    let original : int[5] = [1, 2, 3, 4, 5];
+    let reversed : int[] = reverse(original, 5);
+    // Deve imprimir: 5, 4, 3, 2, 1
+    let j : int = 0;
+    while (j < 5) {
+        print(reversed[j]);
+        j = j + 1;
+    }
+}
+\end{lstlisting}
+\paragraph{Saída Lexer}\mbox{}
+\begin{lstlisting}
+Token {pos = (1,1), lexeme = TFunc}
+Token {pos = (1,6), lexeme = TIdent "reverse"}
+Token {pos = (1,13), lexeme = TLParen}
+Token {pos = (1,14), lexeme = TIdent "arr"}
+Token {pos = (1,18), lexeme = TColon}
+Token {pos = (1,20), lexeme = TInt}
+Token {pos = (1,23), lexeme = TLBracket}
+Token {pos = (1,24), lexeme = TRBracket}
+Token {pos = (1,25), lexeme = TComma}
+Token {pos = (1,27), lexeme = TIdent "size"}
+Token {pos = (1,32), lexeme = TColon}
+Token {pos = (1,34), lexeme = TInt}
+Token {pos = (1,37), lexeme = TRParen}
+Token {pos = (1,39), lexeme = TColon}
+Token {pos = (1,41), lexeme = TInt}
+Token {pos = (1,45), lexeme = TLBracket}
+Token {pos = (1,46), lexeme = TRBracket}
+Token {pos = (1,48), lexeme = TLBrace}
+Token {pos = (2,5), lexeme = TLet}
+Token {pos = (2,9), lexeme = TIdent "result"}
+Token {pos = (2,16), lexeme = TColon}
+Token {pos = (2,18), lexeme = TInt}
+Token {pos = (2,21), lexeme = TLBracket}
+Token {pos = (2,22), lexeme = TRBracket}
+Token {pos = (2,24), lexeme = TAssign}
+Token {pos = (2,26), lexeme = TNew}
+Token {pos = (2,30), lexeme = TInt}
+Token {pos = (2,33), lexeme = TLBracket}
+Token {pos = (2,34), lexeme = TIdent "size"}
+Token {pos = (2,38), lexeme = TRBracket}
+Token {pos = (2,39), lexeme = TSemi}
+Token {pos = (3,5), lexeme = TLet}
+Token {pos = (3,9), lexeme = TIdent "i"}
+Token {pos = (3,11), lexeme = TColon}
+Token {pos = (3,13), lexeme = TInt}
+Token {pos = (3,17), lexeme = TAssign}
+Token {pos = (3,19), lexeme = TLitInt 0}
+Token {pos = (3,20), lexeme = TSemi}
+Token {pos = (4,5), lexeme = TWhile}
+Token {pos = (4,11), lexeme = TLParen}
+Token {pos = (4,12), lexeme = TIdent "i"}
+Token {pos = (4,14), lexeme = TLt}
+Token {pos = (4,16), lexeme = TIdent "size"}
+Token {pos = (4,20), lexeme = TRParen}
+Token {pos = (4,22), lexeme = TLBrace}
+Token {pos = (5,9), lexeme = TIdent "result"}
+Token {pos = (5,15), lexeme = TLBracket}
+Token {pos = (5,16), lexeme = TIdent "i"}
+Token {pos = (5,17), lexeme = TRBracket}
+Token {pos = (5,19), lexeme = TAssign}
+Token {pos = (5,21), lexeme = TIdent "arr"}
+Token {pos = (5,24), lexeme = TLBracket}
+Token {pos = (5,25), lexeme = TIdent "size"}
+Token {pos = (5,30), lexeme = TMinus}
+Token {pos = (5,32), lexeme = TIdent "i"}
+Token {pos = (5,34), lexeme = TMinus}
+Token {pos = (5,36), lexeme = TLitInt 1}
+Token {pos = (5,37), lexeme = TRBracket}
+Token {pos = (5,38), lexeme = TSemi}
+Token {pos = (6,9), lexeme = TIdent "i"}
+Token {pos = (6,11), lexeme = TAssign}
+Token {pos = (6,13), lexeme = TIdent "i"}
+Token {pos = (6,15), lexeme = TPlus}
+Token {pos = (6,17), lexeme = TLitInt 1}
+Token {pos = (6,18), lexeme = TSemi}
+Token {pos = (7,5), lexeme = TRBrace}
+Token {pos = (8,5), lexeme = TReturn}
+Token {pos = (8,12), lexeme = TIdent "result"}
+Token {pos = (8,18), lexeme = TSemi}
+Token {pos = (9,1), lexeme = TRBrace}
+Token {pos = (11,1), lexeme = TFunc}
+Token {pos = (11,6), lexeme = TIdent "main"}
+Token {pos = (11,10), lexeme = TLParen}
+Token {pos = (11,11), lexeme = TRParen}
+Token {pos = (11,13), lexeme = TColon}
+Token {pos = (11,15), lexeme = TVoid}
+Token {pos = (11,20), lexeme = TLBrace}
+Token {pos = (12,5), lexeme = TLet}
+Token {pos = (12,9), lexeme = TIdent "original"}
+Token {pos = (12,18), lexeme = TColon}
+Token {pos = (12,20), lexeme = TInt}
+Token {pos = (12,23), lexeme = TLBracket}
+Token {pos = (12,24), lexeme = TLitInt 5}
+Token {pos = (12,25), lexeme = TRBracket}
+Token {pos = (12,27), lexeme = TAssign}
+Token {pos = (12,29), lexeme = TLBracket}
+Token {pos = (12,30), lexeme = TLitInt 1}
+Token {pos = (12,31), lexeme = TComma}
+Token {pos = (12,33), lexeme = TLitInt 2}
+Token {pos = (12,34), lexeme = TComma}
+Token {pos = (12,36), lexeme = TLitInt 3}
+Token {pos = (12,37), lexeme = TComma}
+Token {pos = (12,39), lexeme = TLitInt 4}
+Token {pos = (12,40), lexeme = TComma}
+Token {pos = (12,42), lexeme = TLitInt 5}
+Token {pos = (12,43), lexeme = TRBracket}
+Token {pos = (12,44), lexeme = TSemi}
+Token {pos = (13,5), lexeme = TLet}
+Token {pos = (13,9), lexeme = TIdent "reversed"}
+Token {pos = (13,18), lexeme = TColon}
+Token {pos = (13,20), lexeme = TInt}
+Token {pos = (13,23), lexeme = TLBracket}
+Token {pos = (13,24), lexeme = TRBracket}
+Token {pos = (13,26), lexeme = TAssign}
+Token {pos = (13,28), lexeme = TIdent "reverse"}
+Token {pos = (13,35), lexeme = TLParen}
+Token {pos = (13,36), lexeme = TIdent "original"}
+Token {pos = (13,44), lexeme = TComma}
+Token {pos = (13,46), lexeme = TLitInt 5}
+Token {pos = (13,47), lexeme = TRParen}
+Token {pos = (13,48), lexeme = TSemi}
+Token {pos = (15,5), lexeme = TLet}
+Token {pos = (15,9), lexeme = TIdent "j"}
+Token {pos = (15,11), lexeme = TColon}
+Token {pos = (15,13), lexeme = TInt}
+Token {pos = (15,17), lexeme = TAssign}
+Token {pos = (15,19), lexeme = TLitInt 0}
+Token {pos = (15,20), lexeme = TSemi}
+Token {pos = (16,5), lexeme = TWhile}
+Token {pos = (16,11), lexeme = TLParen}
+Token {pos = (16,12), lexeme = TIdent "j"}
+Token {pos = (16,14), lexeme = TLt}
+Token {pos = (16,16), lexeme = TLitInt 5}
+Token {pos = (16,17), lexeme = TRParen}
+Token {pos = (16,19), lexeme = TLBrace}
+Token {pos = (17,9), lexeme = TPrint}
+Token {pos = (17,14), lexeme = TLParen}
+Token {pos = (17,15), lexeme = TIdent "reversed"}
+Token {pos = (17,23), lexeme = TLBracket}
+Token {pos = (17,24), lexeme = TIdent "j"}
+Token {pos = (17,25), lexeme = TRBracket}
+Token {pos = (17,26), lexeme = TRParen}
+Token {pos = (17,27), lexeme = TSemi}
+Token {pos = (18,9), lexeme = TIdent "j"}
+Token {pos = (18,11), lexeme = TAssign}
+Token {pos = (18,13), lexeme = TIdent "j"}
+Token {pos = (18,15), lexeme = TPlus}
+Token {pos = (18,17), lexeme = TLitInt 1}
+Token {pos = (18,18), lexeme = TSemi}
+Token {pos = (19,5), lexeme = TRBrace}
+Token {pos = (20,1), lexeme = TRBrace}
+Token {pos = (21,1), lexeme = TEOF}
+\end{lstlisting}
+
+\paragraph{Saída Parser}\mbox{}
+\begin{lstlisting}
+Program
+|
++- Func: reverse
+|  |
+|  +- Generics: []
+|  |
+|  +- Params
+|  |  |
+|  |  +- Param: arr
+|  |  |  |
+|  |  |  `- Array
+|  |  |     |
+|  |  |     `- TyInt
+|  |  |
+|  |  `- Param: size
+|  |     |
+|  |     `- TyInt
+|  |
+|  +- ReturnType
+|  |  |
+|  |  `- Array
+|  |     |
+|  |     `- TyInt
+|  |
+|  `- Body
+|     |
+|     +- Let: result
+|     |  |
+|     |  +- Array
+|     |  |  |
+|     |  |  `- TyInt
+|     |  |
+|     |  `- New
+|     |     |
+|     |     `- Array
+|     |        |
+|     |        +- TyInt
+|     |        |
+|     |        `- Size
+|     |           |
+|     |           `- Var: size
+|     |
+|     +- Let: i
+|     |  |
+|     |  +- TyInt
+|     |  |
+|     |  `- Int: 0
+|     |
+|     +- While
+|     |  |
+|     |  +- BinOp: Lt
+|     |  |  |
+|     |  |  +- Var: i
+|     |  |  |
+|     |  |  `- Var: size
+|     |  |
+|     |  `- Body
+|     |     |
+|     |     +- Assign
+|     |     |  |
+|     |     |  +- ArrayAccess
+|     |     |  |  |
+|     |     |  |  +- Var: result
+|     |     |  |  |
+|     |     |  |  `- Var: i
+|     |     |  |
+|     |     |  `- ArrayAccess
+|     |     |     |
+|     |     |     +- Var: arr
+|     |     |     |
+|     |     |     `- BinOp: Sub
+|     |     |        |
+|     |     |        +- BinOp: Sub
+|     |     |        |  |
+|     |     |        |  +- Var: size
+|     |     |        |  |
+|     |     |        |  `- Var: i
+|     |     |        |
+|     |     |        `- Int: 1
+|     |     |
+|     |     `- Assign
+|     |        |
+|     |        +- Var: i
+|     |        |
+|     |        `- BinOp: Add
+|     |           |
+|     |           +- Var: i
+|     |           |
+|     |           `- Int: 1
+|     |
+|     `- Return
+|        |
+|        `- Var: result
+|
+`- Func: main
+   |
+   +- Generics: []
+   |
+   +- Params
+   |
+   +- ReturnType
+   |  |
+   |  `- TyVoid
+   |
+   `- Body
+      |
+      +- Let: original
+      |  |
+      |  +- Array
+      |  |  |
+      |  |  +- TyInt
+      |  |  |
+      |  |  `- Size
+      |  |     |
+      |  |     `- Int: 5
+      |  |
+      |  `- ArrayLit
+      |     |
+      |     +- Int: 1
+      |     |
+      |     +- Int: 2
+      |     |
+      |     +- Int: 3
+      |     |
+      |     +- Int: 4
+      |     |
+      |     `- Int: 5
+      |
+      +- Let: reversed
+      |  |
+      |  +- Array
+      |  |  |
+      |  |  `- TyInt
+      |  |
+      |  `- Call
+      |     |
+      |     +- Var: reverse
+      |     |
+      |     +- Var: original
+      |     |
+      |     `- Int: 5
+      |
+      +- Let: j
+      |  |
+      |  +- TyInt
+      |  |
+      |  `- Int: 0
+      |
+      `- While
+         |
+         +- BinOp: Lt
+         |  |
+         |  +- Var: j
+         |  |
+         |  `- Int: 5
+         |
+         `- Body
+            |
+            +- Print
+            |  |
+            |  `- ArrayAccess
+            |     |
+            |     +- Var: reversed
+            |     |
+            |     `- Var: j
+            |
+            `- Assign
+               |
+               +- Var: j
+               |
+               `- BinOp: Add
+                  |
+                  +- Var: j
+                  |
+                  `- Int: 1
+    
+\end{lstlisting}
+
+\paragraph{Saída Pretty}\mbox{}
+\begin{lstlisting}
+func reverse(arr : int[],  size : int) : int[] {
+    let result : int[]  = new int[size];
+    let i : int  = 0;
+    while (i < size) {
+        result[i] = arr[size - i - 1];
+        i = i + 1;
+    }
+    return result;
+}
+func main() {
+    let original : int[5]  = [1,  2,  3,  4,  5];
+    let reversed : int[]  = reverse(original,  5);
+    let j : int  = 0;
+    while (j < 5) {
+        print(reversed[j]);
+        j = j + 1;
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Exemplo 4: Operações Lógicas e Matemáticas}
+\begin{lstlisting}
+func calculateBMI(weight : float, height : float) : float {
+    return weight / (height * height);
+}
+
+func isAdult(age : int) : bool {
+    return age >= 18;
+}
+
+func main() : void {
+    let bmi : float = calculateBMI(70.5, 1.75);
+    let adult : bool = isAdult(20);
+    print(bmi);
+    print(adult);
+    if (adult && bmi > 25.0) {
+        print("Adulto com sobrepeso");
+    } else {
+        print("Condição normal");
+    }
+}
+\end{lstlisting}
+\paragraph{Saída Lexer}\mbox{}
+\begin{lstlisting}
+--- Lexer ---
+Token {pos = (1,1), lexeme = TFunc}
+Token {pos = (1,6), lexeme = TIdent "calculateBMI"}
+Token {pos = (1,18), lexeme = TLParen}
+Token {pos = (1,19), lexeme = TIdent "weight"}
+Token {pos = (1,26), lexeme = TColon}
+Token {pos = (1,28), lexeme = TFloat}
+Token {pos = (1,33), lexeme = TComma}
+Token {pos = (1,35), lexeme = TIdent "height"}
+Token {pos = (1,42), lexeme = TColon}
+Token {pos = (1,44), lexeme = TFloat}
+Token {pos = (1,49), lexeme = TRParen}
+Token {pos = (1,51), lexeme = TColon}
+Token {pos = (1,53), lexeme = TFloat}
+Token {pos = (1,59), lexeme = TLBrace}
+Token {pos = (2,5), lexeme = TReturn}
+Token {pos = (2,12), lexeme = TIdent "weight"}
+Token {pos = (2,19), lexeme = TDiv}
+Token {pos = (2,21), lexeme = TLParen}
+Token {pos = (2,22), lexeme = TIdent "height"}
+Token {pos = (2,29), lexeme = TTimes}
+Token {pos = (2,31), lexeme = TIdent "height"}
+Token {pos = (2,37), lexeme = TRParen}
+Token {pos = (2,38), lexeme = TSemi}
+Token {pos = (3,1), lexeme = TRBrace}
+Token {pos = (5,1), lexeme = TFunc}
+Token {pos = (5,6), lexeme = TIdent "isAdult"}
+Token {pos = (5,13), lexeme = TLParen}
+Token {pos = (5,14), lexeme = TIdent "age"}
+Token {pos = (5,18), lexeme = TColon}
+Token {pos = (5,20), lexeme = TInt}
+Token {pos = (5,23), lexeme = TRParen}
+Token {pos = (5,25), lexeme = TColon}
+Token {pos = (5,27), lexeme = TBool}
+Token {pos = (5,32), lexeme = TLBrace}
+Token {pos = (6,5), lexeme = TReturn}
+Token {pos = (6,12), lexeme = TIdent "age"}
+Token {pos = (6,16), lexeme = TGe}
+Token {pos = (6,19), lexeme = TLitInt 18}
+Token {pos = (6,21), lexeme = TSemi}
+Token {pos = (7,1), lexeme = TRBrace}
+Token {pos = (9,1), lexeme = TFunc}
+Token {pos = (9,6), lexeme = TIdent "main"}
+Token {pos = (9,10), lexeme = TLParen}
+Token {pos = (9,11), lexeme = TRParen}
+Token {pos = (9,13), lexeme = TColon}
+Token {pos = (9,15), lexeme = TVoid}
+Token {pos = (9,20), lexeme = TLBrace}
+Token {pos = (10,5), lexeme = TLet}
+Token {pos = (10,9), lexeme = TIdent "bmi"}
+Token {pos = (10,13), lexeme = TColon}
+Token {pos = (10,15), lexeme = TFloat}
+Token {pos = (10,21), lexeme = TAssign}
+Token {pos = (10,23), lexeme = TIdent "calculateBMI"}
+Token {pos = (10,35), lexeme = TLParen}
+Token {pos = (10,36), lexeme = TLitFloat 70.5}
+Token {pos = (10,40), lexeme = TComma}
+Token {pos = (10,42), lexeme = TLitFloat 1.75}
+Token {pos = (10,46), lexeme = TRParen}
+Token {pos = (10,47), lexeme = TSemi}
+Token {pos = (11,5), lexeme = TLet}
+Token {pos = (11,9), lexeme = TIdent "adult"}
+Token {pos = (11,15), lexeme = TColon}
+Token {pos = (11,17), lexeme = TBool}
+Token {pos = (11,22), lexeme = TAssign}
+Token {pos = (11,24), lexeme = TIdent "isAdult"}
+Token {pos = (11,31), lexeme = TLParen}
+Token {pos = (11,32), lexeme = TLitInt 20}
+Token {pos = (11,34), lexeme = TRParen}
+Token {pos = (11,35), lexeme = TSemi}
+Token {pos = (12,5), lexeme = TPrint}
+Token {pos = (12,10), lexeme = TLParen}
+Token {pos = (12,11), lexeme = TIdent "bmi"}
+Token {pos = (12,14), lexeme = TRParen}
+Token {pos = (12,15), lexeme = TSemi}
+Token {pos = (13,5), lexeme = TPrint}
+Token {pos = (13,10), lexeme = TLParen}
+Token {pos = (13,11), lexeme = TIdent "adult"}
+Token {pos = (13,16), lexeme = TRParen}
+Token {pos = (13,17), lexeme = TSemi}
+Token {pos = (14,5), lexeme = TIf}
+Token {pos = (14,8), lexeme = TLParen}
+Token {pos = (14,9), lexeme = TIdent "adult"}
+Token {pos = (14,15), lexeme = TAnd}
+Token {pos = (14,18), lexeme = TIdent "bmi"}
+Token {pos = (14,22), lexeme = TGt}
+Token {pos = (14,24), lexeme = TLitFloat 25.0}
+Token {pos = (14,28), lexeme = TRParen}
+Token {pos = (14,30), lexeme = TLBrace}
+Token {pos = (15,9), lexeme = TPrint}
+Token {pos = (15,14), lexeme = TLParen}
+Token {pos = (15,15), lexeme = TLitString "Adulto com sobrepeso"}
+Token {pos = (15,37), lexeme = TRParen}
+Token {pos = (15,38), lexeme = TSemi}
+Token {pos = (16,5), lexeme = TRBrace}
+Token {pos = (16,7), lexeme = TElse}
+Token {pos = (16,12), lexeme = TLBrace}
+Token {pos = (17,9), lexeme = TPrint}
+Token {pos = (17,14), lexeme = TLParen}
+Token {pos = (17,15), lexeme = TLitString "Condi\231\227o normal"}
+Token {pos = (17,32), lexeme = TRParen}
+Token {pos = (17,33), lexeme = TSemi}
+Token {pos = (18,5), lexeme = TRBrace}
+Token {pos = (19,1), lexeme = TRBrace}
+Token {pos = (20,1), lexeme = TEOF}    
+\end{lstlisting}
+
+\paragraph{Saída Parser}\mbox{}
+\begin{lstlisting}
+ --- Parser ---
+Program
+|
++- Func: calculateBMI
+|  |
+|  +- Generics: []
+|  |
+|  +- Params
+|  |  |
+|  |  +- Param: weight
+|  |  |  |
+|  |  |  `- TyFloat
+|  |  |
+|  |  `- Param: height
+|  |     |
+|  |     `- TyFloat
+|  |
+|  +- ReturnType
+|  |  |
+|  |  `- TyFloat
+|  |
+|  `- Body
+|     |
+|     `- Return
+|        |
+|        `- BinOp: Div
+|           |
+|           +- Var: weight
+|           |
+|           `- BinOp: Mul
+|              |
+|              +- Var: height
+|              |
+|              `- Var: height
+|
++- Func: isAdult
+|  |
+|  +- Generics: []
+|  |
+|  +- Params
+|  |  |
+|  |  `- Param: age
+|  |     |
+|  |     `- TyInt
+|  |
+|  +- ReturnType
+|  |  |
+|  |  `- TyBool
+|  |
+|  `- Body
+|     |
+|     `- Return
+|        |
+|        `- BinOp: Ge
+|           |
+|           +- Var: age
+|           |
+|           `- Int: 18
+|
+`- Func: main
+   |
+   +- Generics: []
+   |
+   +- Params
+   |
+   +- ReturnType
+   |  |
+   |  `- TyVoid
+   |
+   `- Body
+      |
+      +- Let: bmi
+      |  |
+      |  +- TyFloat
+      |  |
+      |  `- Call
+      |     |
+      |     +- Var: calculateBMI
+      |     |
+      |     +- Float: 70.5
+      |     |
+      |     `- Float: 1.75
+      |
+      +- Let: adult
+      |  |
+      |  +- TyBool
+      |  |
+      |  `- Call
+      |     |
+      |     +- Var: isAdult
+      |     |
+      |     `- Int: 20
+      |
+      +- Print
+      |  |
+      |  `- Var: bmi
+      |
+      +- Print
+      |  |
+      |  `- Var: adult
+      |
+      `- If
+         |
+         +- BinOp: And
+         |  |
+         |  +- Var: adult
+         |  |
+         |  `- BinOp: Gt
+         |     |
+         |     +- Var: bmi
+         |     |
+         |     `- Float: 25.0
+         |
+         +- Then
+         |  |
+         |  `- Print
+         |     |
+         |     `- String: "Adulto com sobrepeso"
+         |
+         `- Else
+            |
+            `- Print
+               |
+               `- String: "Condi\231\227o normal"   
+\end{lstlisting}
+
+\paragraph{Saída Pretty}\mbox{}
+\begin{lstlisting}
+func calculateBMI(weight : float,  height : float) : float {
+    return weight / height * height;
+}
+func isAdult(age : int) : bool {
+    return age >= 18;
+}
+func main() {
+    let bmi : float  = calculateBMI(70.5,  1.75);
+    let adult : bool  = isAdult(20);
+    print(bmi);
+    print(adult);
+    if (adult && bmi > 25.0) {
+        print("Adulto com sobrepeso");
+    } else {
+          print("Condição normal");
+      }
+}  
+\end{lstlisting}
+
+\subsubsection{Exemplo 5: Função Identidade}
+\begin{lstlisting}
+func id(x) {
+    return x;
+}
+\end{lstlisting}
+\paragraph{Saída Lexer}\mbox{}
+\begin{lstlisting}
+--- Lexer ---
+Token {pos = (1,1), lexeme = TFunc}
+Token {pos = (1,6), lexeme = TIdent "id"}
+Token {pos = (1,8), lexeme = TLParen}
+Token {pos = (1,9), lexeme = TIdent "x"}
+Token {pos = (1,10), lexeme = TRParen}
+Token {pos = (1,12), lexeme = TLBrace}
+Token {pos = (2,5), lexeme = TReturn}
+Token {pos = (2,12), lexeme = TIdent "x"}
+Token {pos = (2,13), lexeme = TSemi}
+Token {pos = (3,1), lexeme = TRBrace}
+Token {pos = (4,1), lexeme = TEOF}    
+\end{lstlisting}
+
+\paragraph{Saída Parser}\mbox{}
+\begin{lstlisting}
+--- Parser ---
+Program
+|
+`- Func: id
+   |
+   +- Generics: []
+   |
+   +- Params
+   |  |
+   |  `- Param: x
+   |     |
+   |     `- TyVar "auto"
+   |
+   +- ReturnType
+   |  |
+   |  `- TyVoid
+   |
+   `- Body
+      |
+      `- Return
+         |
+         `- Var: x    
+\end{lstlisting}
+
+\paragraph{Saída Pretty}\mbox{}
+\begin{lstlisting}
+ --- Pretty ---
+func id(x) {
+    return x;
+}   
+\end{lstlisting}
+
+\subsubsection{Exemplo 6: Função Map (Genéricos)}
+\begin{lstlisting}
+forall a b . func map (f : (a) -> b, v : a[]) : b[] {
+    let result = new b[v.size];
+    for (i = 0; i < v.size ; i++) {
+      result[i] = f(v[i]);
+    }
+    return result;
+}
+\end{lstlisting}
+\paragraph{Saída Lexer}\mbox{}
+\begin{lstlisting}
+--- Lexer ---
+Token {pos = (1,1), lexeme = TForall}
+Token {pos = (1,8), lexeme = TIdent "a"}
+Token {pos = (1,10), lexeme = TIdent "b"}
+Token {pos = (1,12), lexeme = TDot}
+Token {pos = (1,14), lexeme = TFunc}
+Token {pos = (1,19), lexeme = TIdent "map"}
+Token {pos = (1,23), lexeme = TLParen}
+Token {pos = (1,24), lexeme = TIdent "f"}
+Token {pos = (1,26), lexeme = TColon}
+Token {pos = (1,28), lexeme = TLParen}
+Token {pos = (1,29), lexeme = TIdent "a"}
+Token {pos = (1,30), lexeme = TRParen}
+Token {pos = (1,32), lexeme = TArrow}
+Token {pos = (1,35), lexeme = TIdent "b"}
+Token {pos = (1,36), lexeme = TComma}
+Token {pos = (1,38), lexeme = TIdent "v"}
+Token {pos = (1,40), lexeme = TColon}
+Token {pos = (1,42), lexeme = TIdent "a"}
+Token {pos = (1,43), lexeme = TLBracket}
+Token {pos = (1,44), lexeme = TRBracket}
+Token {pos = (1,45), lexeme = TRParen}
+Token {pos = (1,47), lexeme = TColon}
+Token {pos = (1,49), lexeme = TIdent "b"}
+Token {pos = (1,50), lexeme = TLBracket}
+Token {pos = (1,51), lexeme = TRBracket}
+Token {pos = (1,53), lexeme = TLBrace}
+Token {pos = (2,5), lexeme = TLet}
+Token {pos = (2,9), lexeme = TIdent "result"}
+Token {pos = (2,16), lexeme = TAssign}
+Token {pos = (2,18), lexeme = TNew}
+Token {pos = (2,22), lexeme = TIdent "b"}
+Token {pos = (2,23), lexeme = TLBracket}
+Token {pos = (2,24), lexeme = TIdent "v"}
+Token {pos = (2,25), lexeme = TDot}
+Token {pos = (2,26), lexeme = TIdent "size"}
+Token {pos = (2,30), lexeme = TRBracket}
+Token {pos = (2,31), lexeme = TSemi}
+Token {pos = (3,5), lexeme = TFor}
+Token {pos = (3,9), lexeme = TLParen}
+Token {pos = (3,10), lexeme = TIdent "i"}
+Token {pos = (3,12), lexeme = TAssign}
+Token {pos = (3,14), lexeme = TLitInt 0}
+Token {pos = (3,15), lexeme = TSemi}
+Token {pos = (3,17), lexeme = TIdent "i"}
+Token {pos = (3,19), lexeme = TLt}
+Token {pos = (3,21), lexeme = TIdent "v"}
+Token {pos = (3,22), lexeme = TDot}
+Token {pos = (3,23), lexeme = TIdent "size"}
+Token {pos = (3,28), lexeme = TSemi}
+Token {pos = (3,30), lexeme = TIdent "i"}
+Token {pos = (3,31), lexeme = TInc}
+Token {pos = (3,33), lexeme = TRParen}
+Token {pos = (3,35), lexeme = TLBrace}
+Token {pos = (4,7), lexeme = TIdent "result"}
+Token {pos = (4,13), lexeme = TLBracket}
+Token {pos = (4,14), lexeme = TIdent "i"}
+Token {pos = (4,15), lexeme = TRBracket}
+Token {pos = (4,17), lexeme = TAssign}
+Token {pos = (4,19), lexeme = TIdent "f"}
+Token {pos = (4,20), lexeme = TLParen}
+Token {pos = (4,21), lexeme = TIdent "v"}
+Token {pos = (4,22), lexeme = TLBracket}
+Token {pos = (4,23), lexeme = TIdent "i"}
+Token {pos = (4,24), lexeme = TRBracket}
+Token {pos = (4,25), lexeme = TRParen}
+Token {pos = (4,26), lexeme = TSemi}
+Token {pos = (5,5), lexeme = TRBrace}
+Token {pos = (6,5), lexeme = TReturn}
+Token {pos = (6,12), lexeme = TIdent "result"}
+Token {pos = (6,18), lexeme = TSemi}
+Token {pos = (7,1), lexeme = TRBrace}
+Token {pos = (8,1), lexeme = TEOF}    
+\end{lstlisting}
+
+\paragraph{Saída Parser}\mbox{}
+\begin{lstlisting}
+--- Parser ---
+Program
+|
+`- Func: map
+   |
+   +- Generics: ["a","b"]
+   |
+   +- Params
+   |  |
+   |  +- Param: f
+   |  |  |
+   |  |  `- TyFun [TyStruct "a"] (TyStruct "b")
+   |  |
+   |  `- Param: v
+   |     |
+   |     `- Array
+   |        |
+   |        `- TyStruct "a"
+   |
+   +- ReturnType
+   |  |
+   |  `- Array
+   |     |
+   |     `- TyStruct "b"
+   |
+   `- Body
+      |
+      +- Let: result
+      |  |
+      |  +- TyVar "auto"
+      |  |
+      |  `- New
+      |     |
+      |     `- Array
+      |        |
+      |        +- TyStruct "b"
+      |        |
+      |        `- Size
+      |           |
+      |           `- FieldAccess: size
+      |              |
+      |              `- Var: v
+      |
+      +- For
+      |  |
+      |  +- Init
+      |  |  |
+      |  |  `- Assign
+      |  |     |
+      |  |     +- Var: i
+      |  |     |
+      |  |     `- Int: 0
+      |  |
+      |  +- Cond
+      |  |  |
+      |  |  `- BinOp: Lt
+      |  |     |
+      |  |     +- Var: i
+      |  |     |
+      |  |     `- FieldAccess: size
+      |  |        |
+      |  |        `- Var: v
+      |  |
+      |  +- Step
+      |  |  |
+      |  |  `- Assign
+      |  |     |
+      |  |     +- Var: i
+      |  |     |
+      |  |     `- BinOp: Add
+      |  |        |
+      |  |        +- Var: i
+      |  |        |
+      |  |        `- Int: 1
+      |  |
+      |  `- Body
+      |     |
+      |     `- Assign
+      |        |
+      |        +- ArrayAccess
+      |        |  |
+      |        |  +- Var: result
+      |        |  |
+      |        |  `- Var: i
+      |        |
+      |        `- Call
+      |           |
+      |           +- Var: f
+      |           |
+      |           `- ArrayAccess
+      |              |
+      |              +- Var: v
+      |              |
+      |              `- Var: i
+      |
+      `- Return
+         |
+         `- Var: result
+  
+\end{lstlisting}
+
+\paragraph{Saída Pretty}\mbox{}
+\begin{lstlisting}
+--- Pretty ---
+forall a b . func map(f : (a) -> b,  v : a[]) : b[] {
+    let result  = new b[v.size];
+    for (i = 0; i < v.size; i = i + 1) {
+        result[i] = f(v[i]);
+    }
+    return result;
+}
+\end{lstlisting}
+
+
+\subsection{Casos de Sucesso para Verificação de Tipo de Interpretador}
+
+{Exemplo 1: Fatorial (Recursão)}
+    \textbf{Código:} Função recursiva para cálculo de fatorial.
+    \begin{lstlisting}[language=C]
+func factorial(n : int) : int {
+    if (n <= 1) { return 1; } 
+    else { return n * factorial(n - 1); }
+}
+func main() : int {
+    let result : int = factorial(5);
+    print(result);
+    return 0;
+}
+    \end{lstlisting}
+    \textbf{Resultado:}
+    \begin{lstlisting}
+--- Type Check (Stage 2) ---
+Type check passed
+--- Run (Stage 2) ---
+120
+    \end{lstlisting}
+    \textbf{Sucesso:} Valida recursão e condicionais.
+\end{frame}
+
+   {Exemplo 3: Operações com Arranjos}
+    \textbf{Código:} Inversão de array \textit{in-place}.
+    \begin{lstlisting}[language=C]
+func main() : void {
+    let original : int[5] = [1, 2, 3, 4, 5];
+    let reversed : int[] = reverse(original, 5);
+    // ... loop de impressao ...
+}
+    \end{lstlisting}
+    \textbf{Resultado:}
+    \begin{lstlisting}
+--- Type Check (Stage 2) ---
+Type check passed
+--- Run (Stage 2) ---
+5
+4
+3
+2
+1
+    \end{lstlisting}
+    \textbf{Sucesso:} Valida alocação de memória e acesso a índices.
+\end{frame}
+
+   {Exemplo 4: Tipos e Coerção}
+    \textbf{Código:} Cálculo de BMI (Float) e Lógica Booleana.
+    \begin{lstlisting}[language=C]
+func main() : void {
+    let bmi : float = calculateBMI(70.5, 1.75);
+    let adult : bool = isAdult(20);
+    print(bmi);
+    print(adult);
+    // ...
+}
+    \end{lstlisting}
+    \textbf{Resultado:}
+    \begin{lstlisting}
+--- Type Check (Stage 2) ---
+Type check passed
+--- Run (Stage 2) ---
+23.020409
+True
+Condição normal
+    \end{lstlisting}
+    \textbf{Sucesso:} Valida tipos primitivos e coerção (Int $\to$ Float).
+\end{frame}
+
+\subsection{Casos de Erro para Verificação de Tipo de Interpretador}
+
+  {Análise de Erros}
+    O compilador identificou corretamente erros semânticos nos exemplos fornecidos, provando a eficácia do Type Checker.
+\end{frame}
+
+   {Exemplo 2: Tipo Indefinido}
+    \textbf{Problema:} Declaração de variável com tipo inexistente.
+    \begin{lstlisting}[language=C]
+struct Person { ... }
+func main() : void {
+    let people : People[3]; // Erro: 'People' vs 'Person'
+}
+    \end{lstlisting}
+    \textbf{Saída do Compilador:}
+    \begin{lstlisting}
+--- Type Check (Stage 2) ---
+Undefined struct type: People
+--- Run (Stage 2) ---
+Type check failed: Undefined struct type: People
+    \end{lstlisting}
+    \textbf{Conclusão:} O sistema de tipos impede uso de estruturas não declaradas.
+\end{frame}
+
+   {Exemplo 5: Retorno em Função Void}
+    \textbf{Problema:} Incompatibilidade de retorno.
+    \begin{lstlisting}[language=C]
+func id(x) { // Retorno implícito Void
+    return x; // Erro: Retornando valor em função Void
+}
+    \end{lstlisting}
+    \textbf{Saída do Compilador:}
+    \begin{lstlisting}
+--- Type Check (Stage 2) ---
+Void function should not return a value.
+    \end{lstlisting}
+    \textbf{Conclusão:} Validação estrita de assinaturas de função.
+\end{frame}
+
+   {Exemplo 6: Escopo de Variável}
+    \textbf{Problema:} Variável não declarada.
+    \begin{lstlisting}[language=C]
+for (i = 0; i < v.size ; i++) { // Erro: 'i' nao foi declarado
+    result[i] = f(v[i]);
+}
+    \end{lstlisting}
+    \textbf{Saída do Compilador:}
+    \begin{lstlisting}
+--- Type Check (Stage 2) ---
+Variable 'i' not declared.
+    \end{lstlisting}
 
 
 \subsection{Limitações}
+Uma limitação identificada na implementação atual refere-se à exibição de caracteres UTF-8 nas ferramentas de depuração do compilador (\texttt{---lexer}), por conta da utilização da função \texttt{Show} do Haskell, que não apresenta capacidade de apresentar os caracteres UTF-8 naturalmente.
+
+Por exemplo, ao processar uma string contendo "Condição normal", o lexer pode produzir uma saída onde os caracteres acentuados são substituídos por seus códigos numéricos escapados, como ilustrado abaixo:
+
+\begin{lstlisting}
+Token {pos = (17,15), lexeme = TLitString "Condi\231\227o normal"}
+\end{lstlisting}
+
+Esta limitação afeta apenas a visualização dos dados durante o desenvolvimento e depuração, não comprometendo a lógica interna do compilador ou identificação dos lexemas, além de estar de acordo com as normas do trabalho, onde é restrito a utilização de instâncias de \texttt{Show} apenas na apresentação do código estruturado utilizando a flag \texttt{---pretty}. Além disso, a linguagem não suporta comentários aninhados, sendo possível colocar comentários apenas com a utilização de duas barras (\texttt{//}).
 
 \section{Conclusão}
 
