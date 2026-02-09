@@ -1,13 +1,7 @@
-func factorial(n : int) : int {
-    if (n <= 1) {
-        return 1;
-    } else {
-        return n * factorial(n - 1);
+forall a b . func map (f : (a) -> b, v : a[]) : b[] {
+    let result = new b[v.size];
+    for (i = 0; i < v.size ; i++) {
+      result[i] = f(v[i]);
     }
-}
-
-func main() : int {
-    let result : int = factorial(5);
-    print(result); // Deve imprimir 120
-    return 0;
+    return result;
 }
