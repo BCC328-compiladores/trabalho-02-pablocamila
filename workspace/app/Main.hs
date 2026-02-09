@@ -6,6 +6,7 @@ import SL.Frontend.Lexer.SLLexer (lexer)
 import SL.Frontend.Parser.SLParser (slParser)
 import SL.Frontend.Pretty.SLPretty (ppProgram)
 import SL.TypeChecker.TypeChecker (checkProgram)
+import SL.Interpreter.Interpreter (evalProgram)
 import Text.PrettyPrint (render)
 import System.Exit (exitFailure)
 import Data.Tree (drawTree, Tree(..))
@@ -19,6 +20,7 @@ data Options = Options
   , optParser :: Bool   -- Flag para rodar o parser e mostrar a AST
   , optPretty :: Bool   -- Flag para rodar o pretty printer
   , optCheck :: Bool    -- Flag para rodar o type checker
+  , optRun :: Bool      -- Flag para rodar o interpretador
   , optInput :: FilePath -- Caminho do arquivo de entrada
   }
 
@@ -29,6 +31,7 @@ optionsParser = Options
   <*> switch (long "parser" <> help "Run parser")
   <*> switch (long "pretty" <> help "Run pretty printer")
   <*> switch (long "check" <> help "Run type checker")
+  <*> switch (long "run" <> help "Run interpreter")
   <*> strArgument (metavar "FILE" <> help "Input file")
 
 -- Ponto de entrada do programa
@@ -72,9 +75,19 @@ run opts = do
           Right ast -> case checkProgram ast of
             Left err -> putStrLn err >> exitFailure
             Right _ -> putStrLn "Type check passed"
+    else if optRun opts
+      then do
+        -- Executa o parser e o interpretador
+        case slParser content of
+          Left err -> putStrLn err >> exitFailure
+          Right ast -> do
+            -- Opcionalmente rodar o type check antes
+            case checkProgram ast of
+              Left err -> putStrLn ("Type check failed: " ++ err) >> exitFailure
+              Right _ -> evalProgram ast
     else
       -- Mensagem caso nenhuma flag seja fornecida
-      putStrLn "Please specify one of --lexer, --parser, --pretty, --check"
+      putStrLn "Please specify one of --lexer, --parser, --pretty, --check --run"
 
 -- Configuracao da descricao do programa para o help
 optsDef :: ParserInfo Options

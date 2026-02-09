@@ -14,6 +14,11 @@ run_check() {
     cabal run -v0 bcc328 -- --check "$1"
 }
 
+run_interp() {
+    echo "--- Run ---"
+    cabal run -v0 bcc328 -- --run "$1"
+}
+
 export PATH=$HOME/.local/bin:$PATH
 export LIBRARY_PATH=$HOME/lib:$LIBRARY_PATH
 
@@ -29,16 +34,20 @@ for file in tests/*.sl; do
         check)
             run_check "$file"
             ;;
+        run)
+            run_interp "$file"
+            ;;
         all)
             run_stage1 "$file"
             run_check "$file"
+            run_interp "$file"
             ;;
         *)
             echo "Error: Unknown mode '$MODE'"
-            echo "Usage: $0 [stage1|check|all]"
+            echo "Usage: $0 [stage1|check|run|all]"
             exit 1
             ;;
     esac
-
+    
     echo "---------------------------------------------------"
 done
