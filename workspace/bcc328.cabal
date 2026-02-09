@@ -46,7 +46,9 @@ library
       SL.Frontend.Pretty.SLPretty
       SL.Frontend.Syntax.SLSyntax
       SL.TypeChecker.TypeChecker
-      
+      SL.Interpreter.Interpreter
+
+
     hs-source-dirs:   src
 
     default-language: Haskell2010
