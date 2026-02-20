@@ -6,7 +6,7 @@ import SL.Frontend.Syntax.SLSyntax
 import qualified Data.Map as Map
 import Control.Monad
 import Control.Monad.State
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class()
 import Data.IORef
 import Data.Array.IO
 import Data.Maybe (fromMaybe)

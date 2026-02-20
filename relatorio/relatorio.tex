@@ -68,9 +68,266 @@ Este documento apresenta o relatório da primeira etapa do desenvolvimento do co
 \section{Introdução}
 O objetivo deste trabalho é desenvolver um compilador completo para a linguagem de programação SL (Simple Language), uma linguagem com tipagem estática e suporte a funções, registros, arranjos e polimorfismo paramétrico. Este projeto é desenvolvido como parte dos requisitos da disciplina bcc328- Construção de Compiladores I, do Departamento de Computação da Universidade Federal de Ouro Preto (UFOP). O compilador será implementado na linguagem funcional Haskell e terá como alvo a geração de código WebAssembly (WAT), permitindo a portabilidade e execução de programas em ambientes web modernos.
 
-A construção de um compilador é uma tarefa complexa que envolve o entendimento profundo de teoria das linguagens formais, estruturas de dados e algoritmos. O projeto visa consolidar os conhecimentos teóricos adquiridos em sala de aula através da implementação prática das fases fundamentais de um compilador: análise léxica, análise sintática, análise semântica (verificação de tipos) e geração de código intermediário e final. É utilizado o Haskell como linguagem de implementação, juntamente com ferramentas como Alex e Happy, sendo configurações suficientes para lidar e representar suficientemente as transformações de código necessárias em cada etapa do processo de compilação.
+A construção de um compilador é uma tarefa complexa que envolve o entendimento profundo de teoria das linguagens formais, estruturas de dados e algoritmos. O projeto visa consolidar os conhecimentos teóricos adquiridos em sala de aula através da implementação prática das fases fundamentais de um compilador: análise léxica, análise sintática, análise semântica (verificação de tipos) e geração de código intermediário e final. É utilizado o Haskell como linguagem de implementação, juntamente com ferramentas como Alex e Happy, sendo configurações suficientes para lidar e representar suficientemente as transformações de código necessárias em cada etapa do processo de compilação. 
 
 \section{Metodologia}
+
+\subsection{Separação de Tarefas}
+A separação de tarefas envolveu ambos os integrantes desenvolvendo em conjunto o código através do compartilhamento da própria tela na plataforma de comunicação "\textit{Discord}", e ambos executando os testes em máquina local, tirando dúvidas com a inteligência artificial em cada parte do trabalho — caso necessário —, e executando nos contêineres Docker os testes, havendo poucas tarefas separadas para cada um fazer sozinho. A ideia era apreendermos a construção de cada parte juntos e não cada um especializar em uma área do código, para que entendêssemos integralmente sobre o código e construíssemos o presente relatório através da plataforma de edição de texto "\textit{Overleaf}".
+
+\subsection{Detalhamento de Prompts e Resultados}
+Para assistência na realização do trabalho foi utilizado o Gemini 3.0 Pro. Algumas das perguntas e respostas não estão presentes porque aumentariam muito o tamanho do relatório, então foram encurtadas alguns Prompts e foram escolhidos os de maior relevância. Eles não necessariamente estão na ordem cronológica de requisições.
+
+\noindent\rule{\textwidth}{0.4pt}
+
+Pergunta: "Segundo o conteúdo das aulas de Análise Sintática, eu tenho uma gramática que se parece com isso (enviei a imagem dos slides/anotações). Como eu poderia iniciar o código Haskell para minha linguagem? Me dê somente o esqueleto inicial para eu fazer sozinho o restante."
+
+Resposta: "Com certeza. Você pode usar tipos algébricos recursivos para representar a árvore. Separe as declarações de nível superior das instruções internas e expressões. Aqui está um esqueleto expandido para `SLSyntax.hs`, incluindo como representar expressões complexas:"
+\begin{lstlisting}[language=Haskell]
+--SLSyntax.hs
+data Program = Program [TopLevel]
+    deriving (Show,Eq)
+
+data TopLevel
+    = TopFunc FuncDecl
+    | TopStruct StructDecl
+    deriving (Show, Eq)
+
+data Stmt
+    = SLet String Type (Maybe Expr) -- Declaração
+    | SIf Expr Block (Maybe Block)  -- Condicional
+    | SWhile Expr Block             -- Loop
+    | SReturn (Maybe Expr)
+    deriving (Show, Eq)
+
+data Expr
+    = EInt Int | EFloat Float | EString String | EBool Bool
+    | EVar String
+    | EBinOp BinOp Expr Expr       -- Operações binárias (+, -, *)
+    | EArrayAccess Expr Expr       -- Acesso a array (arr[i])
+    | EFieldAccess Expr String     -- Acesso a struct (obj.campo)
+    | ENew Type                    -- Alocação (new int[5])
+    deriving (Show, Eq)
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta:"Para realizar a inferência de tipos no typechecker, eu deveria usar constraints e unificação como mostrado nas aulas (aula de Inferência Baseada em Restrições)? Estou achando a implementação do algoritmo W um pouco complexa."
+
+Resposta:"A abordagem de constraints é poderosa para linguagens com inferência global (como Haskell ou ML), mas como sua linguagem SL possui tipos explícitos nas declarações (ex: `let x : int = ...`), o uso de constraints seria desnecessário e trabalhoso.
+Eu sugiro seguir a abordagem vista nas aulas sobre **Verificação de Tipos (TLine/While), que utiliza uma verificação descendente recursiva com síntese de tipos.
+Veja como ficaria a estrutura para verificar expressões e comandos recursivamente:"
+
+\begin{lstlisting}[language=Haskell]
+--TypeChecker.hs
+checkExpr :: Expr -> TypeCheck Type
+checkExpr (EInt _) = return TyInt
+checkExpr (EBinOp op l r) = do
+    t1 <- checkExpr l
+    t2 <- checkExpr r
+    checkBinOp op t1 t2
+
+-- Verificação Recursiva de Comandos
+checkStmt :: Stmt -> TypeCheck ()
+checkStmt (SIf cond thenBlock elseBlockMaybe) = do
+    condType <- checkExpr cond
+    unless (condType == TyBool) $
+        throwError $ "Condicao do If deve ser booleana"
+    checkBlock thenBlock -- Recursão no bloco then
+    case elseBlockMaybe of
+        Just elseBlock -> checkBlock elseBlock -- Recursão no bloco else
+        Nothing -> return ()
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta: "Estou implementando o verificador seguindo a lógica da aula de TLine, mas se eu chamar uma função que está declarada no final do arquivo, ocorre erro. Como posso resolver isso? Me dê uma ideia."
+
+Resposta: "Uma estratégia comum é fazer múltiplas passadas sobre a AST. Primeiro você coleta todos os símbolos (structs e assinaturas de funções) para popular o ambiente, e só depois verifica os corpos das funções. Tente estruturar sua função principal `checkTopLevels` assim:"
+
+\begin{lstlisting}[language=Haskell]
+--TypeChecker.hs
+checkTopLevels :: [TopLevel] -> TypeCheck ()
+checkTopLevels tops = do
+    mapM_ collectStruct tops      -- Passada 1: Coleta nomes de structs
+    mapM_ collectFunc tops        -- Passada 2: Coleta assinaturas de funções
+    structs <- gets envStructs
+    mapM_ checkStructDecl (Map.elems structs) -- Passada 3: Verifica campos de structs
+    mapM_ checkFuncBody tops      -- Passada 4: Verifica corpos das funções com ambiente completo
+
+-- Exemplo de coleta (Passada 2)
+collectFunc :: TopLevel -> TypeCheck ()
+collectFunc (TopFunc f@(FuncDecl name _ _ _ _)) = do
+    funcs <- gets envFuncs
+    modify $ \env -> env { envFuncs = Map.insert name f (envFuncs env) }
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+
+"Preciso de ajuda para entender o código do interpretador apresentado nas aulas (Semântica de While) e adaptá-lo para a minha linguagem. Nas aulas, o ambiente é definido simplesmente como Map Var Value, e a inicialização de variáveis parece assumir valores implícitos. No meu caso, eu tenho declarações explícitas de tipo, como let x : int;. Devo guardar o tipo no interpretador também?"
+
+Resposta: "Excelente observação. O código da aula é simplificado. Na sua linguagem, como você permite declarar variáveis sem valor inicial (`let x : int;`), você precisa saber qual valor colocar na memória.
+Manter a estrutura de tupla `(Nome, Tipo)` que vem da sua AST (seja em `SLet` ou nos parâmetros de função) é uma ótima ideia. Isso permite que você chame uma função `defaultValue :: Type -> Value` para inicializar a memória corretamente.
+
+\begin{lstlisting}[language=Haskell]
+-- Sugestão de adaptação (Interpreter.hs)
+realExecStmt (SLet name typ exprMaybe) = do
+    val <- case exprMaybe of
+        Just expr -> evalExpr expr
+        Nothing -> defaultValue typ -- Inicializa com zero/vazio se não houver expressão
+
+-- Função auxiliar para gerar valores padrão
+defaultValue :: Type -> Interp Value
+defaultValue TyInt = return $ VInt 0
+defaultValue TyBool = return $ VBool False
+defaultValue (TyArray elemType (Just sizeExpr)) = do
+    -- Lógica de alocação de array (ver próxima seção)
+    return ...
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta: "A linguagem While da aula só tem variáveis simples, minha linguagem tem Arrays. Como eu implemento isso no interpretador? Pesquisei e poderia ser utilizando uma lista do Haskell [Int], não tem uma forma melhor?"
+
+Resposta: "Sim, usar listas (`[Int]`) é ineficiente porque a atualização de um elemento requer reconstruir a lista até aquele ponto, o que tem complexidade **$O(n)$**.
+Para um interpretador imperativo, a melhor estratégia é usar **Arrays Mutáveis na Mônada IO** (`IOArray`). Isso permite leitura e escrita em tempo constante **$O(1)$**.
+Aqui está como você pode implementar a leitura (`EArrayAccess`) e escrita de arrays:"
+
+\begin{lstlisting}[language=Haskell]
+-- Leitura de Array (evalExpr)
+evalExpr (EArrayAccess arrExpr indexExpr) = do
+    arrVal <- evalExpr arrExpr
+    indexVal <- evalExpr indexExpr
+    case (arrVal, indexVal) of
+        (VArray ref, VInt i) -> do -- ref é IORef (IOArray Int Value)
+            arr <- liftIO $ readIORef ref
+            liftIO $ readArray arr i -- Leitura O(1)
+        _ -> return VNull
+
+-- Escrita em Array (realExecStmt - SAssign)
+realExecStmt (SAssign (EArrayAccess arrExpr indexExpr) rhs) = do
+    val <- evalExpr rhs
+    -- ... avalia arrExpr e indexExpr ...
+    case (arrVal, indexVal) of
+        (VArray ref, VInt i) -> do
+            arr <- liftIO $ readIORef ref
+            liftIO $ writeArray arr i val -- Escrita O(1)
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta: "Para Structs, pensei em usar um Map String Value como valor da variável para guardar os campos. Seria bom fazer dessa forma?"
+
+Resposta: "O problema de usar um `Map` imutável simples é similar ao dos arrays: se você tiver um vetor de structs e modificar apenas um campo de uma delas, teria que recriar a struct inteira e atualizar o vetor. A melhor estratégia é usar referências mutáveis (`IORef`) para os campos. Assim, `VStruct` contém uma referência para o mapa de campos. Alterar um campo vira uma operação de escrita na memória ('in-place')."
+
+\begin{lstlisting}[language=Haskell]
+-- Estrutura otimizada
+data Value = ...
+    | VStruct String (IORef (Map.Map String Value))
+
+-- Escrita em Campo de Struct
+realExecStmt (SAssign (EFieldAccess objExpr field) rhs) = do
+    val <- evalExpr rhs
+    objVal <- evalExpr objExpr
+    case objVal of
+        VStruct _ fieldsRef -> do
+            fields <- liftIO $ readIORef fieldsRef
+            -- Modifica o mapa e escreve de volta na referencia
+            liftIO $ writeIORef fieldsRef (Map.insert field val fields)
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta: "Na semântica da aula de While, o interpretador retorna o novo ambiente modificado a cada passo, ExecM, como estou usando IORef, eu preciso retornar o ambiente novo ou as mudanças são globais?"
+
+Resposta: "Com `IORef`, a mutação é um efeito colateral (side-effect) na memória, então você **não precisa** retornar o ambiente `Env` modificado a cada passo.
+Porém, você ainda precisa gerenciar o escopo local (funções). Quando uma função é chamada, você cria **novas referências** para os parâmetros, isolando o escopo local do global."
+
+\begin{lstlisting}[language=Haskell]
+-- Gerenciamento de Escopo Local (evalFuncCall)
+evalFuncCall (FuncDecl _ _ params _ body) args = do
+    globals <- get
+    -- Aloca nova memoria (novos IORefs) para os parametros locais
+    localVars <- liftIO $ foldM (\m ((pName, _), val) -> do
+        ref <- newIORef val
+        return $ Map.insert pName ref m
+        ) Map.empty (zip params args)
+
+    -- Troca para o escopo local
+    put $ globals { envVars = localVars }
+    executeBlock body
+    -- Restaura o escopo anterior
+    put globals
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta: "O material da aula (While/Line) só mostra Inteiros e Booleanos. Minha linguagem tem Float e string. Como eu estendo o tipo Value para suportar isso e, principalmente, como implemento o Cast, Int -> Float, em somas, que não existe na aula?"
+
+Resposta: "Você deve estender o `data Value` com construtores `VFloat` e `VString`. Para a coerção, trate isso na função `applyBinOp` e `areTypesCompatible`. No Type Checker, você permite `Int` onde se espera `Float`. No Interpretador, você converte antes de operar:"
+
+\begin{lstlisting}[language=Haskell]
+-- TypeChecker: Compatibilidade
+areTypesCompatible TyFloat TyInt = True -- Int pode virar Float
+
+-- Interpreter: Coerção implícita
+applyBinOp Add (VInt a) (VFloat b) = return $ VFloat (fromIntegral a + b)
+applyBinOp Add (VFloat a) (VInt b) = return $ VFloat (a + fromIntegral b)
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta: "Para facilitar meus testes, me ajude a criar um script shell simples que percorra todos os arquivos `.sl` na pasta `tests/` e rode o compilador com a flag `--run`."
+
+Resposta: "Aqui está um script bash básico para iterar sobre os arquivos e executar o comando:"
+
+\begin{lstlisting}[language=bash]
+# Script run_tests.sh
+for file in tests/*.sl; do
+    echo "Running $file..."
+    cabal run -v0 bcc328 -- --run "$file"
+done
+\end{lstlisting}
+
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta: "A aula sobre Closure Conversion mostra como trabalhar com funções. Como poderia ser feito a implementação no meu interpretador, fiz o código sem tratar este caso. (apenas retorne a ideia e um esqueleto do código)?"
+
+Resposta da IA: "Para que seu interpretador suporte funções como valores (passar funções como argumento), você precisaria que o Value pudesse armazenar não apenas dados, mas também um Closure: um par contendo a definição da função e o ambiente (RuntimeEnv) onde ela foi criada. A ideia seria estender o data Value e a lógica de chamada (ECall):"
+\begin{lstlisting}[language=Haskell]
+-- Ideia de Esqueleto para Closures
+data Value = ...
+    | VClosure FuncDecl RuntimeEnv -- Captura o ambiente no momento da criação
+
+-- Na avaliação de uma variável que é função:
+evalExpr (EVar name) = do
+    env <- get
+    -- Se 'name' for uma função local, retorna VClosure com o env atual
+    return $ VClosure (findFunc name) env
+
+-- Na chamada de função (ECall):
+evalExpr (ECall funcExpr args) = do
+    funcVal <- evalExpr funcExpr
+    case funcVal of
+        VClosure funcdef capturedEnv -> do
+             -- Restaura o ambiente capturado antes de executar
+             withEnv capturedEnv (evalFuncCall funcdef args)
+\end{lstlisting}
+
+Pergunta Seguinte: "Eu teria que mudar toda a arquitetura do projeto? Isso demandaria muito tempo para projetar o codigo de novo?"
+
+Resposta da IA: "Sim, demandaria uma refatoração considerável. Hoje, seu interpretador assume que ECall recebe um nome de função global (EVar fName). Para suportar Closures, você teria que:
+\begin{itemize}
+    \item Alterar ECall para aceitar qualquer expressão que avalie para um VClosure.
+    \item Alterar ECall para aceitar qualquer expressão que avalie para um VClosure.
+    \item  Alterar o gerenciamento de escopo para suportar a captura de variáveis (o RuntimeEnv teria que ser armazenável dentro do Value, o que cria uma recursão complexa nos tipos).
+    \item Lidar com Ciclos de Memória (garbage collection) se closures capturarem referências para si mesmas
+\end{itemize}
+ Dado o escopo atual, manter apenas funções globais é uma decisão de projeto válida para simplificar a arquitetura."
+
+
+\noindent\rule{\textwidth}{0.4pt}
+Pergunta: "Como eu implemento um print que aceita qualquer tipo no Haskell no interpretador? Estou com muitos problemas envolvendo a funcao print"
+
+Resposta: "Você pode aproveitar a typeclass Show do Haskell. Se você fizer seu tipo Value derivar ou instanciar Show, o Haskell saberá como converter VInt, VFloat, etc., para string automaticamente. Assim, sua implementação de print fica genérica:"
+
+\begin{lstlisting}[language=Haskell]
+-- Interpreter.hs
+instance Show Value where
+    show (VInt i) = show i
+    show (VFloat f) = show f
+    -- ...
+
+realExecStmt (SPrint expr) = do
+    val <- evalExpr expr
+    liftIO $ print val -- Usa a instancia de Show automaticamente
+
+
+\end{lstlisting}
 
 \subsection{Estrutura sintática de SL}
 \label{sec:glc}
@@ -266,8 +523,43 @@ Para suportar referências futuras (forward references), onde uma função ou st
 O ambiente de verificação (\texttt{Env}) armazena tabelas de símbolos para structs, funções e variáveis. A verificação impõe tipagem forte, mas permite coerção implícita (widening) de \texttt{int} para \texttt{float} em operações matemáticas. Erros semânticos, como uso de variáveis não declaradas ou incompatibilidade de tipos, interrompem o processo e reportam mensagens de erro descritivas.
 
 \subsection{Geração de código}
+Não houve implementação da geração de código.
 
 \section{Resultados e Discussão}
+
+\subsection{Requisitos Cumpridos e Não Cumpridos}
+
+\subsubsection*{Implementado}
+\begin{itemize}
+    \item \textbf{Inferência de Tipo (Local/Auto):} Implementada a palavra-chave \texttt{auto}, permitindo inferência local baseada na expressão de inicialização.
+    \item \textbf{Genéricos (Polimorfismo Paramétrico):} Suporte à palavra-chave \texttt{forall}, permitindo funções genéricas com substituição simples de tipos durante a chamada.
+    \item \textbf{Escopo Léxico (Local e Global):} Suporte a variáveis locais em blocos e globais (funções/structs).
+    \item \textbf{Estruturas de Controle:} \texttt{if}/\texttt{else}, \texttt{while}, \texttt{for} implementados tanto no verificador de tipos quanto no interpretador.
+    \item \textbf{Arranjos e Structs:} Verificação de tipos completa (acesso a campos/índices) e alocação dinâmica no interpretador.
+    \item \textbf{Interpretador com Estado Mutável:} Uso de \texttt{IORef} para simular memória mutável e referências, permitindo mudança de valores em variáveis, como em linguagens imperativas.
+\end{itemize}
+
+\subsubsection*{Parcialmente Implementado}
+\begin{itemize}
+    \item \textbf{Funções de Primeira Classe (First-Class Functions):} Foi implementado apenas no TypeChecker inicialmente, porém, pela falta de tempo, não foi concluída no interpretador.
+    \begin{itemize}
+        \item \textbf{Type Checker:} Tenta suportar. O código verifica se uma variável possui tipo \texttt{TyFun} (linhas 251-260 do \texttt{TypeChecker.hs}).
+        \item \textbf{Interpretador:} Não foi feito o constrututor para TyFun no tipo de dados \texttt{Value} (linhas 14-22 do \texttt{Interpreter.hs}) do Interpretador. Isso impede a execução de código que armazene funções em variáveis ou as passe como argumento. Se o código tentar executar \texttt{let x = minhaFuncao;}, ocorrerá erro.
+    \end{itemize}
+    \item \textbf{Inferência de Tipos Completa:} Apenas inferência local (descendente recursiva) foi implementada. O trabalho utiliza uma abordagem de verificação descendente recursiva, em vez de geração de restrições (constraints) e resolução via SAT/Unificação completa (estilo Hindley-Milner). A escolha foi obtida após tirar dúvidas com a LLM, onde foi respondido que a utilização desse tipo de abordagem (descendente recursiva) seria menos complexa e mais viável para o contexto da nossa linguagem (linguagem explicitamente tipada).
+\end{itemize}
+
+\subsubsection*{Não Implementado}
+\begin{itemize}
+    \item \textbf{Funções anônimas}
+    \item \textbf{Closure Conversion} (Desnecessário dada a ausência de lambdas/compilação).
+    \item \textbf{Funções Aninhadas:} O escopo é global para as funções ou local para as variáveis.
+    \item \textbf{Geração de Código (WASM)}
+\end{itemize}
+
+
+
+
 
 \subsection{Instruções de Uso}
 O projeto é configurado para ser executado em um ambiente Docker, com todas as dependências necessárias (GHC, Cabal, Alex, Happy).
@@ -323,10 +615,6 @@ cabal run -v0 bcc328  --check tests/example1.sl
     \item \textbf{Interpretador}: Executar o Interpretador em um arquivo especifico
     \begin{lstlisting}[language=bash]
 cabal run -v0 bcc328  --run tests/example1.sl
-    \end{lstlisting}
-
-
-
     \end{lstlisting}
 \end{itemize}
 
@@ -1775,7 +2063,6 @@ Type check passed
 120
     \end{lstlisting}
     \textbf{Sucesso:} Valida recursão e condicionais.
-\end{frame}
 
    {Exemplo 3: Operações com Arranjos}
     \textbf{Código:} Inversão de array \textit{in-place}.
@@ -1798,7 +2085,6 @@ Type check passed
 1
     \end{lstlisting}
     \textbf{Sucesso:} Valida alocação de memória e acesso a índices.
-\end{frame}
 
    {Exemplo 4: Tipos e Coerção}
     \textbf{Código:} Cálculo de BMI (Float) e Lógica Booleana.
@@ -1821,13 +2107,11 @@ True
 Condição normal
     \end{lstlisting}
     \textbf{Sucesso:} Valida tipos primitivos e coerção (Int $\to$ Float).
-\end{frame}
 
 \subsection{Casos de Erro para Verificação de Tipo de Interpretador}
 
   {Análise de Erros}
     O compilador identificou corretamente erros semânticos nos exemplos fornecidos, provando a eficácia do Type Checker.
-\end{frame}
 
    {Exemplo 2: Tipo Indefinido}
     \textbf{Problema:} Declaração de variável com tipo inexistente.
@@ -1845,7 +2129,6 @@ Undefined struct type: People
 Type check failed: Undefined struct type: People
     \end{lstlisting}
     \textbf{Conclusão:} O sistema de tipos impede uso de estruturas não declaradas.
-\end{frame}
 
    {Exemplo 5: Retorno em Função Void}
     \textbf{Problema:} Incompatibilidade de retorno.
@@ -1860,7 +2143,6 @@ func id(x) { // Retorno implícito Void
 Void function should not return a value.
     \end{lstlisting}
     \textbf{Conclusão:} Validação estrita de assinaturas de função.
-\end{frame}
 
    {Exemplo 6: Escopo de Variável}
     \textbf{Problema:} Variável não declarada.
@@ -1887,7 +2169,13 @@ Token {pos = (17,15), lexeme = TLitString "Condi\231\227o normal"}
 
 Esta limitação afeta apenas a visualização dos dados durante o desenvolvimento e depuração, não comprometendo a lógica interna do compilador ou identificação dos lexemas, além de estar de acordo com as normas do trabalho, onde é restrito a utilização de instâncias de \texttt{Show} apenas na apresentação do código estruturado utilizando a flag \texttt{---pretty}. Além disso, a linguagem não suporta comentários aninhados, sendo possível colocar comentários apenas com a utilização de duas barras (\texttt{//}).
 
+Na segunda etapa, a implementação não abrangeu funções anônimas, closure conversion ou funções aninhadas, mantendo o escopo em funções globais de topo. Conforme observado nos testes do Interpretador, a linguagem exige a declaração explícita de variáveis via palavra-chave let, ou parâmetros de função, pois o TypeChecker utiliza essas instruções para a vinculação de nomes e tipos no ambiente. Quanto à inferência de tipos, o suporte ao tipo auto é restrito ao escopo local, sendo resolvido no momento da declaração com base nas expressões em que é utilizado.
+
 \section{Conclusão}
+
+Na primeira etapa, com o uso de Happy e do Alex, a análise sintática foi feita no geral, com exemplos de implementações passadas do professor presentes no github, algumas partes, como o Pretty e o Main, em sua maioria foram feitos com ajuda intensiva de LLMs. Como é possível ver com os testes, ela se demonstra estar, no geral, correta. A parte mais difícil foi confeccionar a GLC que define a AST de forma a abrangir um número grande produções e a implementação do interpretador, que faz a manipulação de Estados e Memória do programa, onde fomos introduzidos à variável mutável \texttt{IORef}.
+
+Foi realizada a implementação do verificador de tipos e do interpretador priorizando a funcionalidade básica da linguagem SL. Em consequência, recursos como closure conversion, funções anônimas e aninhadas não foram integrados ao interpretador, assim como a inferência de tipos global. O uso de múltiplas passadas no TypeChecker permitiu o suporte a referências futuras de funções e structs, garantindo o necessário para que os exemplos de teste definidos no trabalho funcionassem. Os resultados obtidos demonstram a eficácia do modelo adotado, mesmo com suas limitações.
 
 \section{Referências}
 
